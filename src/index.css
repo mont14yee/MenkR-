@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@theme {
+  /* Canvas and Surfaces */
+  --color-canvas: #F1F0EC;
+  --color-surface-neutral: #DCDCD5;
+  --color-surface-muted: #888E80;
+  
+  /* Primary Accent (Lime) */
+  --color-accent-primary: #E7F45A;
+  --color-accent-primary-hover: #D6E34C;
+  --color-accent-primary-pressed: #C5D240;
+
+  /* Secondary Accent (Warm Orange) */
+  --color-accent-warm: #F2A93E;
+  --color-accent-warm-hover: #E19A34;
+  --color-accent-warm-pressed: #CD8928;
+  
+  /* System Accents */
+  --color-accent-destructive: #EF4444;
+  --color-accent-destructive-hover: #DC2626;
+  --color-accent-destructive-pressed: #B91C1C;
+  --color-accent-success: #22C55E;
+  
+  /* Text */
+  --color-tx-primary: #1C1C1A;
+  --color-tx-inverse: #F5F5F0;
+  --color-tx-muted: #8D8D86;
+  
+  /* Borders */
+  --color-bd-subtle: #D8D7D0;
+  --color-bd-focus: #1C1C1A;
+
+  /* Shadows & Elevation */
+  --shadow-sm: 0 1px 2px 0 rgba(28, 28, 26, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(28, 28, 26, 0.05), 0 2px 4px -2px rgba(28, 28, 26, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(28, 28, 26, 0.05), 0 4px 6px -4px rgba(28, 28, 26, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(28, 28, 26, 0.05), 0 8px 10px -6px rgba(28, 28, 26, 0.05);
+
+  /* Radii */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-sans: 'Inter', sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-tx-primary font-sans antialiased selection:bg-accent-primary selection:text-tx-primary;
+  }
+}

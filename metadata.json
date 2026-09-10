@@ -1,0 +1,8 @@
+{
+  "name": "MenkiR",
+  "description": "Mobile-first CRM and business manager for freelancers and studios",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

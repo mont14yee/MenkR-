@@ -1,0 +1,21 @@
+{
+  "name": "MenkiR",
+  "short_name": "MenkiR",
+  "description": "Mobile-first CRM and business manager",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F1F0EC",
+  "theme_color": "#F1F0EC",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

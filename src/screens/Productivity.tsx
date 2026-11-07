@@ -1,17 +1,21 @@
 import React, { useState } from 'react';
-import { Calendar, CheckSquare, FolderHeart, LayoutTemplate, Plus, Search, MoreVertical, Play, Clock } from 'lucide-react';
+import { Calendar, CheckSquare, FolderHeart, LayoutTemplate, Plus, Search, MoreVertical, Play, Clock, Check } from 'lucide-react';
 import { PushedScreenState, TaskItem, EventItem } from '../types';
 import { Card, CardContent, CardHeader, CardTitle, IconButton, Button, Badge } from '../components/ui';
 import { useTasks } from '../context/TasksContext';
 import { useCalendar } from '../context/CalendarContext';
 import { useTemplates } from '../context/TemplatesContext';
 import { useLibrary } from '../context/LibraryContext';
+import { useCommandPalette } from '../context/CommandPaletteContext';
+import { BottomSheet } from '../components/BottomSheet';
 
 export function Productivity({ onPush }: { onPush: (screen: PushedScreenState) => void }) {
   const { tasks, completeTask } = useTasks();
   const { events } = useCalendar();
   const { templates } = useTemplates();
   const { library } = useLibrary();
+  const { openPalette } = useCommandPalette();
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
 
   const activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'upcoming').slice(0, 3);
   const todayEvents = events.filter(e => e.date === new Date().toISOString().split('T')[0]).slice(0, 3);
@@ -25,8 +29,12 @@ export function Productivity({ onPush }: { onPush: (screen: PushedScreenState) =
             <p className="text-[15px] text-tx-muted mt-1">Your central workspace for daily execution.</p>
           </div>
           <div className="hidden md:flex items-center gap-2">
-            <IconButton variant="secondary"><Search size={20} /></IconButton>
-            <IconButton variant="secondary"><MoreVertical size={20} /></IconButton>
+            <IconButton variant="secondary" onClick={openPalette} aria-label="Quick search and command palette">
+              <Search size={20} />
+            </IconButton>
+            <IconButton variant="secondary" onClick={() => setIsActionsOpen(true)} aria-label="Productivity options">
+              <MoreVertical size={20} />
+            </IconButton>
           </div>
         </div>
 
@@ -62,12 +70,28 @@ export function Productivity({ onPush }: { onPush: (screen: PushedScreenState) =
                 <div className="text-center py-6 text-tx-muted text-sm">No active tasks.</div>
               ) : (
                 activeTasks.map(task => (
-                  <div key={task.id} className="flex items-start gap-3 p-3 rounded-xl bg-surface-neutral/30 border border-bd-subtle">
+                  <div 
+                    key={task.id} 
+                    className="flex items-start gap-3 p-3 rounded-xl bg-surface-neutral/30 border border-bd-subtle hover:border-accent-primary/40 transition-colors"
+                  >
                     <button 
-                      onClick={() => completeTask(task.id)}
-                      className="mt-0.5 shrink-0 w-5 h-5 rounded-md border border-tx-muted flex items-center justify-center text-canvas"
-                    />
-                    <div className="flex-1 min-w-0">
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        completeTask(task.id);
+                      }}
+                      aria-label={`Mark task ${task.title} as completed`}
+                      className={`mt-0.5 shrink-0 w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
+                        task.status === 'done'
+                          ? 'bg-accent-primary border-accent-primary text-tx-inverse'
+                          : 'border-tx-muted hover:border-tx-primary hover:bg-surface-neutral text-transparent'
+                      }`}
+                    >
+                      <Check size={13} className={task.status === 'done' ? 'opacity-100' : 'hover:opacity-40'} />
+                    </button>
+                    <div 
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => onPush('tasks')}
+                    >
                       <p className="font-medium text-tx-primary truncate">{task.title}</p>
                       {task.notes && <p className="text-sm text-tx-muted truncate mt-0.5">{task.notes}</p>}
                     </div>
@@ -89,7 +113,11 @@ export function Productivity({ onPush }: { onPush: (screen: PushedScreenState) =
                 <div className="text-center py-6 text-tx-muted text-sm">No events scheduled for today.</div>
               ) : (
                 todayEvents.map(event => (
-                  <div key={event.id} className="flex items-center gap-3 p-3 rounded-xl bg-surface-neutral/30 border border-bd-subtle">
+                  <div 
+                    key={event.id} 
+                    onClick={() => onPush('calendar')}
+                    className="flex items-center gap-3 p-3 rounded-xl bg-surface-neutral/30 border border-bd-subtle hover:border-accent-primary/40 cursor-pointer transition-colors"
+                  >
                     <div className="w-12 text-center shrink-0">
                       <p className="text-sm font-semibold text-tx-primary">{event.startTime || 'All'}</p>
                     </div>
@@ -134,6 +162,39 @@ export function Productivity({ onPush }: { onPush: (screen: PushedScreenState) =
           </div>
         </div>
       </div>
+
+      <BottomSheet isOpen={isActionsOpen} onClose={() => setIsActionsOpen(false)} title="Productivity Shortcuts">
+        <div className="space-y-1 py-2">
+          <button 
+            onClick={() => { setIsActionsOpen(false); openPalette(); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-neutral rounded-xl transition-colors"
+          >
+            <Search size={18} className="text-tx-primary" />
+            <span className="text-[15px] font-medium text-tx-primary">Search Anything</span>
+          </button>
+          <button 
+            onClick={() => { setIsActionsOpen(false); onPush('tasks'); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-neutral rounded-xl transition-colors"
+          >
+            <CheckSquare size={18} className="text-tx-primary" />
+            <span className="text-[15px] font-medium text-tx-primary">Manage All Tasks</span>
+          </button>
+          <button 
+            onClick={() => { setIsActionsOpen(false); onPush('calendar'); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-neutral rounded-xl transition-colors"
+          >
+            <Calendar size={18} className="text-tx-primary" />
+            <span className="text-[15px] font-medium text-tx-primary">View Schedule</span>
+          </button>
+          <button 
+            onClick={() => { setIsActionsOpen(false); onPush('time-tracker'); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-neutral rounded-xl transition-colors"
+          >
+            <Clock size={18} className="text-tx-primary" />
+            <span className="text-[15px] font-medium text-tx-primary">Open Time Tracker</span>
+          </button>
+        </div>
+      </BottomSheet>
     </div>
   );
 }

@@ -17,7 +17,7 @@ describe('Templates Workflow', () => {
     await user.click(screen.getByRole('button', { name: /go to productivity tab/i }));
     
     // 2. Open Templates screen
-    await user.click(screen.getByText('Templates'));
+    await user.click(screen.getByText('Templates', { selector: 'h3' }));
 
     // 3. Create a new template
     await user.click(screen.getByText('Create Template'));

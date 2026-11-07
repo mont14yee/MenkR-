@@ -10,6 +10,7 @@ import { MessagesProvider } from './MessagesContext';
 import { ProfileProvider } from './ProfileContext';
 import { TemplatesProvider } from './TemplatesContext';
 import { LibraryProvider } from './LibraryContext';
+import { AIAssistantProvider } from './AIAssistantContext';
 
 export function DataProvider({ children }: { children: ReactNode }) {
   return (
@@ -24,7 +25,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     <RevenueProvider>
                       <CalendarProvider>
                         <TimeTrackerProvider>
-                          {children}
+                          <AIAssistantProvider>
+                            {children}
+                          </AIAssistantProvider>
                         </TimeTrackerProvider>
                       </CalendarProvider>
                     </RevenueProvider>

@@ -70,7 +70,13 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
         } catch (writeError: any) {
           if (writeError.name === 'QuotaExceededError' || writeError.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
             console.error(`Storage limit exceeded for key "${key}". Cannot save data.`);
-            alert('Your local storage is full. Please clear some space or export your data and reset.');
+            if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+              try {
+                window.alert('Your local storage is full. Please clear some space or export your data and reset.');
+              } catch {
+                // Silently swallow in sandboxed environments where window.alert is disallowed
+              }
+            }
           } else {
             console.error(`Failed to write to localStorage for key "${key}":`, writeError);
           }

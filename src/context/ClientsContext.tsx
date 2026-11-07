@@ -5,7 +5,7 @@ import { generateId } from '../utils/id';
 
 interface ClientsContextValue {
   clients: Client[];
-  addClient: (client: Omit<Client, 'id'>) => void;
+  addClient: (client: Omit<Client, 'id'>) => string;
   updateClient: (id: string, updates: Partial<Client>) => void;
   deleteClient: (id: string) => void;
 }
@@ -20,6 +20,7 @@ export function ClientsProvider({ children }: { children: ReactNode }) {
   const addClient = (client: Omit<Client, 'id'>) => {
     const newClient: Client = { ...client, id: generateId() };
     setClients((prev) => [...prev, newClient]);
+    return newClient.id;
   };
 
   const updateClient = (id: string, updates: Partial<Client>) => {

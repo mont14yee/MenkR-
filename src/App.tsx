@@ -20,6 +20,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Onboarding } from './components/Onboarding';
 import { CommandPaletteProvider } from './context/CommandPaletteContext';
 import { CommandPalette } from './components/CommandPalette';
+import { AuthProvider } from './context/AuthContext';
 import { Loader2 } from 'lucide-react';
 
 function KeepAliveTab({ active, children }: { active: boolean, children: React.ReactNode }) {
@@ -71,7 +72,7 @@ function MainApp() {
       </main>
 
       {/* Mobile Bottom Navigation (hidden on desktop) */}
-      <Navigation activeTab={activeTab} onChange={(tab) => goToTab(tab)} />
+      <Navigation activeTab={activeTab} onChange={(tab) => goToTab(tab)} onPushScreen={push} />
       <CommandPalette />
     </div>
   );
@@ -80,15 +81,17 @@ function MainApp() {
 export default function App() {
   return (
     <PreferencesProvider>
-      <CommandPaletteProvider>
-        <DataProvider>
-          <ToastProvider>
-            <ErrorBoundary>
-              <MainApp />
-            </ErrorBoundary>
-          </ToastProvider>
-        </DataProvider>
-      </CommandPaletteProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <CommandPaletteProvider>
+            <DataProvider>
+              <ErrorBoundary>
+                <MainApp />
+              </ErrorBoundary>
+            </DataProvider>
+          </CommandPaletteProvider>
+        </AuthProvider>
+      </ToastProvider>
     </PreferencesProvider>
   );
 }

@@ -14,12 +14,16 @@ export interface TaskItem {
   categoryId: string;
   priority: 'Low' | 'Medium' | 'High';
   date?: string; // ISO date-time
+  dueDate?: string;
   notes?: string;
   status: 'done' | 'active' | 'upcoming';
   projectId?: string;
   repeat?: string;
   reminder?: number;
   clientId?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  isArchived?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -34,8 +38,24 @@ export interface ProjectItem {
   clientId?: string;
   status?: 'active' | 'completed' | 'on-hold';
   notes?: string;
+  dueDate?: string;
+  budget?: number;
+  hourlyRate?: number;
+  assignedMemberIds?: string[];
+  isArchived?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ActivityEventItem {
+  id: string;
+  action: string;
+  entityType: 'client' | 'project' | 'task' | 'general';
+  entityId?: string;
+  description: string;
+  actorName?: string;
+  metadata?: Record<string, any>;
+  createdAt: string;
 }
 
 export type LibraryCategory = 'Documents' | 'Project Files' | 'Contracts' | 'Proposals' | 'Reports' | 'Images' | 'References' | 'Templates' | 'Design Assets' | 'Notes';
@@ -52,6 +72,8 @@ export interface LibraryItem {
   projectId?: string;
   taskId?: string;
   templateId?: string;
+  fileId?: string;
+  sha256?: string;
   tags: string[];
   description?: string;
   isFavorite?: boolean;
@@ -70,13 +92,18 @@ export interface RevenueMonth {
   isCurrent?: boolean;
 }
 
+export type FinancialRecordType = 'income' | 'expense';
+
 export interface RevenueEntry {
   id: string;
   amount: number;
-  clientOrProject: string; // Legacy, migrating away
+  clientOrProject: string; // Description / Payee / Client
   date: string;
   status: 'Paid' | 'Pending' | 'Overdue';
+  type?: FinancialRecordType; // 'income' | 'expense' (defaults to 'income')
+  category?: string; // e.g. Retainer, Milestone, Services, Software, Subcontractor, Travel
   invoiceNumber?: string;
+  receiptReference?: string;
   notes?: string;
   clientId?: string;
   projectId?: string;
@@ -117,9 +144,12 @@ export interface TimeEntry {
   projectId?: string;
   taskId?: string;
   clientId?: string;
+  userId?: string;
+  userName?: string;
   startedAt: string;
   durationSeconds: number;
   billable: boolean;
+  hourlyRate?: number;
   note?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -135,6 +165,7 @@ export interface Client {
   tags: string[];
   notes?: string;
   avatarSeed: string;
+  isArchived?: boolean;
   createdAt: string;
 }
 
@@ -157,6 +188,11 @@ export interface UserPreferences {
   overdueThresholdDays: number;
   defaultTaskDuration: number;
   categories: Category[];
+  defaultTaskPriority?: 'Low' | 'Medium' | 'High';
+  notifyOnRoleChange?: boolean;
+  notifyOnDataExport?: boolean;
+  notifyOnMilestoneDeadline?: boolean;
+  auditRetentionDays?: number;
 }
 
 export type TabState = 'dashboard' | 'projects' | 'productivity' | 'tools' | 'clients' | 'profile';

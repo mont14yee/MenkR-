@@ -1,13 +1,25 @@
 import { getTodayDateStr } from "../utils/date";
 import React, { useState, useRef } from 'react';
-import { X, MoreVertical, Sparkles, User, Signal, Palette, Landmark, Settings2, ChevronLeft, Trash2, Download, Upload, AlertCircle } from 'lucide-react';
+import { 
+  X, MoreVertical, Sparkles, User, Signal, Palette, Landmark, Settings2, 
+  ChevronLeft, Trash2, Download, Upload, AlertCircle, Database, ShieldCheck, 
+  RefreshCw, Building2, LogIn, LogOut, CheckCircle2, Users2, Mail, UserPlus, 
+  Shield, KeyRound, ChevronRight, Copy, Check, Activity, Bell 
+} from 'lucide-react';
 import { Header, ListRow, CircularProgress } from '../components/Shared';
 import { usePreferences } from '../context/PreferencesContext';
 import { useProfile } from '../context/ProfileContext';
+import { useAuth, OrgRole, OrgMember, OrgInvitation } from '../context/AuthContext';
+import { pushDataToPostgres } from '../services/syncService';
 import { BottomSheet, BottomSheetField } from '../components/BottomSheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { generateId } from '../utils/id';
 import { useToast } from '../context/ToastContext';
+import { validateRequired, validateEmail } from '../utils/validation';
+import { DataMigrationModal } from '../components/DataMigrationModal';
+import { sanitizeDataPayload } from '../utils/migrationValidator';
+import { OperationalHealthModal } from '../components/OperationalHealthModal';
+import { AuditLogModal } from '../components/AuditLogModal';
 
 function PreferencesScreen({ onBack }: { onBack: () => void }) {
   const { preferences, updatePreferences } = usePreferences();
@@ -25,7 +37,9 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
   };
 
   const handleSaveCategory = () => {
-    if (!newCategoryName.trim()) return;
+    if (!validateRequired(newCategoryName)) {
+      return;
+    }
     updatePreferences({
       categories: [
         ...preferences.categories,
@@ -79,8 +93,21 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
         </section>
 
         <section>
-          <h3 className="text-[13px] font-medium text-tx-muted mb-3 uppercase tracking-wider">Defaults</h3>
+          <h3 className="text-[13px] font-medium text-tx-muted mb-3 uppercase tracking-wider">Operational Defaults</h3>
           <div className="flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <span className="text-[15px] text-tx-primary">Default task priority</span>
+              <select 
+                value={preferences.defaultTaskPriority || 'Medium'}
+                onChange={(e) => updatePreferences({ defaultTaskPriority: e.target.value as 'Low' | 'Medium' | 'High' })}
+                className="bg-surface-neutral px-3 py-1.5 rounded-lg outline-none text-[14px]"
+              >
+                <option value="Low">Low Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="High">High Priority</option>
+              </select>
+            </div>
+
             <div className="flex justify-between items-center">
               <span className="text-[15px] text-tx-primary">Reminder lead time</span>
               <select 
@@ -107,6 +134,65 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
                 <option value={15}>15 minutes</option>
               </select>
             </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-[15px] text-tx-primary">Audit log retention</span>
+              <select 
+                value={preferences.auditRetentionDays || 90}
+                onChange={(e) => updatePreferences({ auditRetentionDays: parseInt(e.target.value) })}
+                className="bg-surface-neutral px-3 py-1.5 rounded-lg outline-none text-[14px]"
+              >
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days (Standard)</option>
+                <option value={180}>180 days</option>
+                <option value={365}>1 year (Extended)</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-[13px] font-medium text-tx-muted mb-3 uppercase tracking-wider">Notification Options</h3>
+          <div className="flex flex-col gap-3">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-surface-neutral cursor-pointer hover:bg-surface-neutral/80 transition-colors">
+              <div>
+                <div className="text-[15px] font-medium text-tx-primary">Milestone & Deadline Alerts</div>
+                <div className="text-[12px] text-tx-muted">Notify when task or project deadlines are within 24 hours</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={preferences.notifyOnMilestoneDeadline ?? true}
+                onChange={(e) => updatePreferences({ notifyOnMilestoneDeadline: e.target.checked })}
+                className="w-4 h-4 rounded text-accent-primary"
+              />
+            </label>
+
+            <label className="flex items-center justify-between p-3 rounded-xl bg-surface-neutral cursor-pointer hover:bg-surface-neutral/80 transition-colors">
+              <div>
+                <div className="text-[15px] font-medium text-tx-primary">Security & Role Change Alerts</div>
+                <div className="text-[12px] text-tx-muted">Notify when team roles or access permissions are modified</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={preferences.notifyOnRoleChange ?? true}
+                onChange={(e) => updatePreferences({ notifyOnRoleChange: e.target.checked })}
+                className="w-4 h-4 rounded text-accent-primary"
+              />
+            </label>
+
+            <label className="flex items-center justify-between p-3 rounded-xl bg-surface-neutral cursor-pointer hover:bg-surface-neutral/80 transition-colors">
+              <div>
+                <div className="text-[15px] font-medium text-tx-primary">Data Export Notifications</div>
+                <div className="text-[12px] text-tx-muted">Notify whenever a full organization snapshot is downloaded</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={preferences.notifyOnDataExport ?? true}
+                onChange={(e) => updatePreferences({ notifyOnDataExport: e.target.checked })}
+                className="w-4 h-4 rounded text-accent-primary"
+              />
+            </label>
           </div>
         </section>
 
@@ -191,38 +277,235 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
   const { name, email, businessName, avatarSeed } = profile;
   const { showToast } = useToast();
   
+  const { 
+    user, idToken, organization, organizations, role, 
+    signInWithGoogle, signOut, refreshToken, switchOrganization, 
+    createOrg, fetchMembers, fetchInvitations, inviteUser, 
+    revokeInvite, acceptInvite, changeMemberRole, removeMember 
+  } = useAuth();
+  
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStats, setSyncStats] = useState<Record<string, number> | null>(null);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+
+  // Multi-organization state
+  const [isOrgModalOpen, setIsOrgModalOpen] = useState(false);
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgCurrency, setNewOrgCurrency] = useState('USD');
+
+  // Team & RBAC state
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<OrgMember[]>([]);
+  const [teamInvitations, setTeamInvitations] = useState<OrgInvitation[]>([]);
+  const [isLoadingTeam, setIsLoadingTeam] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<OrgRole>('member');
+  const [inviteTokenInput, setInviteTokenInput] = useState('');
+  const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
+
   const [activeScreen, setActiveScreen] = useState<'main' | 'preferences'>('main');
+  const [isAiInfoOpen, setIsAiInfoOpen] = useState(false);
   const [isComingSoonOpen, setIsComingSoonOpen] = useState(false);
+  const [comingSoonDetails, setComingSoonDetails] = useState({ title: '', desc: '' });
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [importDataContent, setImportDataContent] = useState<string | null>(null);
+  const [isMigrationModalOpen, setIsMigrationModalOpen] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [profileForm, setProfileForm] = useState({ name, email, businessName });
 
+  const loadTeamData = async () => {
+    setIsLoadingTeam(true);
+    try {
+      const [members, invites] = await Promise.all([
+        fetchMembers(),
+        fetchInvitations(),
+      ]);
+      setTeamMembers(members);
+      setTeamInvitations(invites);
+    } catch (err) {
+      console.error('Error loading team data:', err);
+    } finally {
+      setIsLoadingTeam(false);
+    }
+  };
+
+  const handleOpenTeamModal = async () => {
+    if (!user) {
+      showToast({ message: "Please sign in with Google to manage team access." });
+      await signInWithGoogle();
+      return;
+    }
+    setIsTeamModalOpen(true);
+    await loadTeamData();
+  };
+
+  const handleCreateNewOrg = async () => {
+    if (!newOrgName.trim()) {
+      showToast({ message: "Organization name is required." });
+      return;
+    }
+    const created = await createOrg(newOrgName.trim(), newOrgCurrency);
+    if (created) {
+      setNewOrgName('');
+      setIsOrgModalOpen(false);
+    }
+  };
+
+  const handleSendInvite = async () => {
+    if (!inviteEmail.trim() || !inviteEmail.includes('@')) {
+      showToast({ message: "Please enter a valid email address." });
+      return;
+    }
+    const success = await inviteUser(inviteEmail.trim(), inviteRole);
+    if (success) {
+      setInviteEmail('');
+      await loadTeamData();
+    }
+  };
+
+  const handleAcceptInviteSubmit = async () => {
+    if (!inviteTokenInput.trim()) {
+      showToast({ message: "Please enter an invitation token." });
+      return;
+    }
+    setIsAcceptingInvite(true);
+    const success = await acceptInvite(inviteTokenInput.trim());
+    setIsAcceptingInvite(false);
+    if (success) {
+      setInviteTokenInput('');
+      await loadTeamData();
+    }
+  };
+
+  const handleSyncToPostgres = async () => {
+    let token = idToken;
+    if (!token && user) {
+      token = await refreshToken();
+    }
+    if (!token) {
+      showToast({ message: "Please sign in with Google to sync to Cloud SQL." });
+      await signInWithGoogle();
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const getLocalJson = (key: string, fallback: any) => {
+        try {
+          const val = localStorage.getItem(`menkir-${key}`);
+          return val ? JSON.parse(val) : fallback;
+        } catch {
+          return fallback;
+        }
+      };
+
+      const payload = {
+        clients: getLocalJson('clients', []),
+        projects: getLocalJson('projects', []),
+        tasks: getLocalJson('tasks', []),
+        messages: getLocalJson('messages', []),
+        events: getLocalJson('events', []),
+        timeEntries: getLocalJson('time-entries', []),
+        revenues: getLocalJson('revenues', []),
+        templates: getLocalJson('templates', []),
+        library: getLocalJson('library', []),
+        preferences: getLocalJson('preferences', {}),
+      };
+
+      if (role === 'viewer') {
+        showToast({ message: "Permission denied: Viewers have read-only access and cannot push data changes." });
+        return;
+      }
+
+      const result = await pushDataToPostgres(token, profile, payload, organization?.id);
+      setSyncStats(result.stats);
+      showToast({ message: "Successfully synced all data to Cloud SQL PostgreSQL!" });
+    } catch (err: any) {
+      console.error("Postgres sync error:", err);
+      showToast({ message: `Sync failed: ${err.message || 'Database error'}` });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleOpenAuditLog = async () => {
+    let token = idToken;
+    if (!token && user) {
+      token = await refreshToken();
+    }
+    if (!token) {
+      showToast({ message: "Sign in with Google to view audit logs." });
+      return;
+    }
+
+    setIsLoadingAudit(true);
+    setIsAuditModalOpen(true);
+    try {
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (organization?.id) {
+        headers['X-Organization-Id'] = organization.id;
+      }
+      const res = await fetch('/api/audit-events', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Failed to load audit events');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast({ message: err.message || "Failed to load audit logs" });
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
+
   const handleSaveProfile = () => {
+    if (!validateRequired(profileForm.name)) {
+      showToast({ message: "Full Name is required." });
+      return;
+    }
+    if (profileForm.email && !validateEmail(profileForm.email)) {
+      showToast({ message: "Please enter a valid email address." });
+      return;
+    }
     updateProfile(profileForm);
     setIsProfileOpen(false);
+    showToast({ message: "Profile details updated successfully." });
   };
 
   const handleExportData = () => {
-    const data: Record<string, any> = {};
+    const rawData: Record<string, any> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key?.startsWith('menkir-')) {
-        data[key] = localStorage.getItem(key);
+        try {
+          rawData[key] = JSON.parse(localStorage.getItem(key) || 'null');
+        } catch {
+          rawData[key] = localStorage.getItem(key);
+        }
       }
     }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+
+    // Exclude any secrets, API keys, or private auth credentials
+    const cleanData = sanitizeDataPayload(rawData);
+
+    const blob = new Blob([JSON.stringify(cleanData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `menkir-backup-${getTodayDateStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast({ message: 'Data exported successfully' });
+    showToast({ message: 'Data exported successfully (secrets excluded)' });
   };
 
   const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -325,12 +608,42 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
     window.location.reload();
   };
 
+  const openFeaturePreview = (title: string, desc: string) => {
+    setComingSoonDetails({ title, desc });
+    setIsComingSoonOpen(true);
+  };
+
   const settings = [
-    { icon: <Sparkles size={20} className="text-tx-primary" />, title: 'MenkiR AI', subtitle: 'Manage AI settings', onClick: () => setIsComingSoonOpen(true) },
-    { icon: <User size={20} className="text-tx-primary" />, title: 'Account Details', subtitle: 'Update info, website, description', onClick: () => { setProfileForm({ name, email, businessName }); setIsProfileOpen(true); } },
-    { icon: <Signal size={20} className="text-tx-primary" />, title: 'Subscription Plan', subtitle: 'Get the right plan for your business', onClick: () => setIsComingSoonOpen(true) },
-    { icon: <Palette size={20} className="text-tx-primary" />, title: 'Brand Elements', subtitle: 'Add your brand to invoice, emails', onClick: () => setIsComingSoonOpen(true) },
-    { icon: <Landmark size={20} className="text-tx-primary" />, title: 'Bank Account', subtitle: 'Add an account to receive payments', onClick: () => setIsComingSoonOpen(true) },
+    { 
+      icon: <Sparkles size={20} className="text-tx-primary" />, 
+      title: 'MenkiR AI', 
+      subtitle: 'Gemini 3.8 Flash • Executive Summaries & Workflow Generator', 
+      onClick: () => setIsAiInfoOpen(true) 
+    },
+    { 
+      icon: <User size={20} className="text-tx-primary" />, 
+      title: 'Account Details', 
+      subtitle: 'Update info, website, business name', 
+      onClick: () => { setProfileForm({ name, email, businessName }); setIsProfileOpen(true); } 
+    },
+    { 
+      icon: <Signal size={20} className="text-tx-primary" />, 
+      title: 'Subscription Plan', 
+      subtitle: 'Individual Pro plan with local privacy and cloud AI', 
+      onClick: () => openFeaturePreview('Subscription Plan', 'Your current MenkiR build includes full offline-first capabilities, local encrypted persistence, and Gemini-powered automation.') 
+    },
+    { 
+      icon: <Palette size={20} className="text-tx-primary" />, 
+      title: 'Brand Elements', 
+      subtitle: 'Custom invoices, colors, and document headers', 
+      onClick: () => openFeaturePreview('Brand Elements', 'Custom invoice letterheads, logo embedding, and palette styling are slated for the upcoming release.') 
+    },
+    { 
+      icon: <Landmark size={20} className="text-tx-primary" />, 
+      title: 'Bank Account', 
+      subtitle: 'Payout integrations and payment gateways', 
+      onClick: () => openFeaturePreview('Bank Account & Payouts', 'Stripe Connect and automated banking feeds are preparing for upcoming integration.') 
+    },
     { 
       icon: <Settings2 size={20} className="text-tx-primary" />, 
       title: 'Preferences', 
@@ -353,8 +666,8 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
         }
         title="Settings"
         rightIcon={
-          <button className="w-11 h-11 rounded-full bg-surface-neutral flex items-center justify-center text-tx-primary" aria-label="More options">
-            <MoreVertical size={20} />
+          <button onClick={() => setActiveScreen('preferences')} className="w-11 h-11 rounded-full bg-surface-neutral flex items-center justify-center text-tx-primary hover:opacity-80 transition-opacity" aria-label="Open Preferences">
+            <Settings2 size={20} />
           </button>
         }
       />
@@ -380,14 +693,156 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
           ))}
         </div>
 
+        {/* Enterprise Database & Organization */}
         <div className="mt-4 pt-6 border-t border-bd-subtle">
-          <h3 className="text-[13px] font-medium text-tx-muted mb-4 uppercase tracking-wider">Data Management</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-[13px] font-medium text-tx-muted uppercase tracking-wider">
+              Cloud SQL & Organization
+            </h3>
+            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              PostgreSQL Active
+            </span>
+          </div>
+
+          <div className="p-4 bg-surface-neutral/40 rounded-2xl border border-bd-subtle space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[15px] font-semibold text-tx-primary flex items-center gap-2">
+                  <Database size={16} className="text-blue-500" />
+                  {organization ? organization.name : 'Personal Workspace'}
+                </div>
+                <div className="text-[12px] text-tx-muted mt-0.5">
+                  Region: europe-west1 • Multi-tenant Isolation
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {role && (
+                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border capitalize ${
+                    role === 'owner' ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' :
+                    role === 'admin' ? 'bg-purple-500/10 text-purple-600 border-purple-500/30' :
+                    role === 'manager' ? 'bg-blue-500/10 text-blue-600 border-blue-500/30' :
+                    role === 'member' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' :
+                    'bg-slate-500/10 text-slate-600 border-slate-500/30'
+                  }`}>
+                    {role}
+                  </span>
+                )}
+                {user && (
+                  <button 
+                    onClick={() => setIsOrgModalOpen(true)}
+                    className="p-1 hover:bg-surface-neutral rounded-lg text-tx-muted hover:text-tx-primary transition-colors text-[11px] font-medium underline"
+                  >
+                    Switch
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {role === 'viewer' && (
+              <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-[12px] text-blue-600 flex items-center gap-2">
+                <Shield size={14} className="shrink-0" />
+                <span>You have <strong>Viewer</strong> access (read-only). Creating and editing data is restricted.</span>
+              </div>
+            )}
+
+            {user ? (
+              <div className="pt-2 border-t border-bd-subtle flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[13px]">
+                  <span className="text-tx-muted truncate">Connected: {user.email}</span>
+                  <button 
+                    onClick={signOut}
+                    className="text-[12px] text-red-500 hover:underline flex items-center gap-1 shrink-0 ml-2"
+                  >
+                    <LogOut size={12} /> Sign out
+                  </button>
+                </div>
+
+                <div className={`grid ${role === 'owner' || role === 'admin' ? 'grid-cols-3' : 'grid-cols-2'} gap-2 pt-1`}>
+                  <button
+                    onClick={handleOpenTeamModal}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-2 bg-canvas border border-bd-subtle rounded-xl text-[12px] font-medium text-tx-primary hover:bg-surface-neutral transition-colors"
+                  >
+                    <Users2 size={13} className="text-blue-500" />
+                    Team & RBAC
+                  </button>
+
+                  <button
+                    onClick={() => setIsAuditModalOpen(true)}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-2 bg-canvas border border-bd-subtle rounded-xl text-[12px] font-medium text-tx-primary hover:bg-surface-neutral transition-colors"
+                  >
+                    <ShieldCheck size={13} className="text-emerald-500" />
+                    Audit Logs
+                  </button>
+
+                  {(role === 'owner' || role === 'admin') && (
+                    <button
+                      onClick={() => setIsHealthModalOpen(true)}
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-2 bg-canvas border border-bd-subtle rounded-xl text-[12px] font-medium text-tx-primary hover:bg-surface-neutral transition-colors"
+                    >
+                      <Activity size={13} className="text-amber-500" />
+                      Health
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleSyncToPostgres}
+                  disabled={isSyncing || role === 'viewer'}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-tx-primary text-tx-inverse rounded-xl text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50 mt-1"
+                >
+                  <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                  {isSyncing ? 'Syncing...' : 'Sync All Data to PostgreSQL'}
+                </button>
+
+                {syncStats && (
+                  <div className="text-[11px] text-emerald-600 bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20 flex items-center gap-1.5 mt-1">
+                    <CheckCircle2 size={13} className="shrink-0" />
+                    <span>Synchronized: {syncStats.clients || 0} clients, {syncStats.projects || 0} projects, {syncStats.tasks || 0} tasks, {syncStats.revenues || 0} financial records</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="pt-2 border-t border-bd-subtle">
+                <p className="text-[12px] text-tx-muted mb-3 leading-relaxed">
+                  Sign in with Google to enable multi-tenant organization access, cloud PostgreSQL persistence, and automatic audit logging.
+                </p>
+                <button
+                  onClick={signInWithGoogle}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-tx-primary text-tx-inverse rounded-xl text-[13px] font-medium hover:opacity-90 transition-opacity"
+                >
+                  <LogIn size={15} />
+                  Sign In with Google
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 pt-6 border-t border-bd-subtle">
+          <h3 className="text-[13px] font-medium text-tx-muted mb-4 uppercase tracking-wider">Data Management & Recovery</h3>
           <div className="flex flex-col gap-2">
+            <button 
+              onClick={() => setIsMigrationModalOpen(true)} 
+              className="flex items-center gap-3 p-3 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-800/50 rounded-xl hover:opacity-90 transition-opacity"
+            >
+              <Database size={18} className="text-blue-600 dark:text-blue-400" />
+              <div className="flex flex-col text-left">
+                <span className="text-[15px] font-semibold text-blue-950 dark:text-blue-100 flex items-center gap-1.5">
+                  Controlled Migration & Cloud Recovery
+                  <span className="px-1.5 py-0.2 bg-blue-600 text-white text-[10px] rounded-md font-bold">NEW</span>
+                </span>
+                <span className="text-[12px] text-blue-800/80 dark:text-blue-300/80">
+                  Inspect schemas, validate duplicates, safely migrate to Cloud SQL or manage cloud backups
+                </span>
+              </div>
+            </button>
+
             <button onClick={handleExportData} className="flex items-center gap-3 p-3 bg-surface-neutral rounded-xl hover:opacity-80 transition-opacity">
               <Download size={18} className="text-tx-primary" />
               <div className="flex flex-col text-left">
-                <span className="text-[15px] font-medium text-tx-primary">Export Data</span>
-                <span className="text-[12px] text-tx-muted">Download all app data as a JSON backup</span>
+                <span className="text-[15px] font-medium text-tx-primary">Export Data Snapshot</span>
+                <span className="text-[12px] text-tx-muted">Download all app data as sanitized JSON (credentials excluded)</span>
               </div>
             </button>
             
@@ -444,18 +899,370 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
         </BottomSheetField>
       </BottomSheet>
 
+      {/* MenkiR AI Overview Sheet */}
+      <BottomSheet
+        isOpen={isAiInfoOpen}
+        onClose={() => setIsAiInfoOpen(false)}
+        title="MenkiR AI Capabilities"
+      >
+        <div className="flex flex-col gap-4 py-2">
+          <div className="flex items-center gap-3 p-3 bg-surface-neutral/40 rounded-2xl border border-bd-subtle">
+            <div className="w-10 h-10 rounded-full bg-accent-primary/20 flex items-center justify-center text-tx-primary shrink-0">
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <div className="text-[14px] font-semibold text-tx-primary">Gemini 3.8 Flash Engine</div>
+              <div className="text-[12px] text-tx-muted">Secured via server-side proxy</div>
+            </div>
+            <span className="ml-auto px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+              Active
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            <div className="p-3 bg-surface-neutral/20 rounded-xl border border-bd-subtle/50">
+              <div className="text-[13px] font-semibold text-tx-primary mb-1">Project Executive Summaries</div>
+              <p className="text-[12px] text-tx-muted leading-relaxed">
+                Generates instant health reports, completion projections, and key next steps directly from your project hub.
+              </p>
+            </div>
+
+            <div className="p-3 bg-surface-neutral/20 rounded-xl border border-bd-subtle/50">
+              <div className="text-[13px] font-semibold text-tx-primary mb-1">AI Template Generation</div>
+              <p className="text-[12px] text-tx-muted leading-relaxed">
+                Describe your project scope or deliverable in plain English to automatically construct structured phases, milestones, and task checklists.
+              </p>
+            </div>
+
+            <div className="p-3 bg-surface-neutral/20 rounded-xl border border-bd-subtle/50">
+              <div className="text-[13px] font-semibold text-tx-primary mb-1">Zero Client Exposure</div>
+              <p className="text-[12px] text-tx-muted leading-relaxed">
+                Your API secrets never touch the browser client, ensuring strict enterprise security.
+              </p>
+            </div>
+          </div>
+
+          <button onClick={() => setIsAiInfoOpen(false)} className="w-full py-3.5 rounded-full bg-tx-primary text-tx-inverse text-[15px] font-medium mt-2">
+            Got it
+          </button>
+        </div>
+      </BottomSheet>
+
       <BottomSheet
         isOpen={isComingSoonOpen}
         onClose={() => setIsComingSoonOpen(false)}
-        title="Coming Soon"
+        title={comingSoonDetails.title || "Coming Soon"}
       >
-        <div className="py-6 text-center text-tx-muted text-[15px]">
-          This feature is currently under development. Stay tuned for future updates!
+        <div className="py-6 text-center text-tx-muted text-[15px] leading-relaxed px-2">
+          {comingSoonDetails.desc || "This feature is currently under active development. Stay tuned for future updates!"}
         </div>
-        <button onClick={() => setIsComingSoonOpen(false)} className="w-full py-4 rounded-full bg-accent-primary text-tx-primary text-[15px] font-medium mt-4">
+        <button onClick={() => setIsComingSoonOpen(false)} className="w-full py-4 rounded-full bg-accent-primary text-tx-primary text-[15px] font-medium mt-2">
           Got it
         </button>
       </BottomSheet>
+
+      {/* Enterprise Audit & Activity Log Modal */}
+      <AuditLogModal
+        isOpen={isAuditModalOpen}
+        onClose={() => setIsAuditModalOpen(false)}
+      />
+
+      {/* Operational Health & System Diagnostics Modal */}
+      <OperationalHealthModal
+        isOpen={isHealthModalOpen}
+        onClose={() => setIsHealthModalOpen(false)}
+      />
+
+      {/* Organization Switcher & Creation Sheet */}
+      <BottomSheet
+        isOpen={isOrgModalOpen}
+        onClose={() => setIsOrgModalOpen(false)}
+        title="Organizations & Workspaces"
+      >
+        <div className="py-2 space-y-4">
+          <div>
+            <h4 className="text-[13px] font-semibold text-tx-primary mb-2">Your Organizations</h4>
+            {organizations.length === 0 ? (
+              <p className="text-[13px] text-tx-muted py-2">No organizations found.</p>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto no-scrollbar">
+                {organizations.map((org) => {
+                  const isActive = organization?.id === org.id;
+                  return (
+                    <div
+                      key={org.id}
+                      onClick={() => {
+                        switchOrganization(org.id);
+                        setIsOrgModalOpen(false);
+                      }}
+                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-colors ${
+                        isActive 
+                          ? 'bg-accent-primary/10 border-accent-primary' 
+                          : 'bg-surface-neutral/50 border-bd-subtle hover:border-accent-primary/50'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-semibold text-[14px] text-tx-primary flex items-center gap-2">
+                          <Building2 size={16} className="text-tx-secondary" />
+                          {org.name}
+                        </div>
+                        <div className="text-[12px] text-tx-muted mt-0.5">{org.slug} • {org.currency}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-canvas border border-bd-subtle capitalize">
+                          {org.role}
+                        </span>
+                        {isActive && <Check size={16} className="text-accent-primary" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Create New Organization */}
+          <div className="pt-3 border-t border-bd-subtle space-y-2">
+            <h4 className="text-[13px] font-semibold text-tx-primary">Create New Organization</h4>
+            <input
+              type="text"
+              placeholder="e.g. Acme Studio"
+              value={newOrgName}
+              onChange={(e) => setNewOrgName(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl bg-surface-neutral border border-bd-subtle text-[14px] text-tx-primary outline-none focus:border-tx-primary"
+            />
+            <div className="flex gap-2">
+              <select
+                value={newOrgCurrency}
+                onChange={(e) => setNewOrgCurrency(e.target.value)}
+                className="px-3 py-2 rounded-xl bg-surface-neutral border border-bd-subtle text-[13px] text-tx-primary outline-none"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+              </select>
+              <button
+                onClick={handleCreateNewOrg}
+                disabled={!newOrgName.trim()}
+                className="flex-1 py-2 px-4 rounded-xl bg-tx-primary text-tx-inverse text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                Create Workspace
+              </button>
+            </div>
+          </div>
+
+          {/* Join Organization via Invitation Token */}
+          <div className="pt-3 border-t border-bd-subtle space-y-2">
+            <h4 className="text-[13px] font-semibold text-tx-primary">Join with Invitation Token</h4>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Paste invitation token here"
+                value={inviteTokenInput}
+                onChange={(e) => setInviteTokenInput(e.target.value)}
+                className="flex-1 px-3 py-2.5 rounded-xl bg-surface-neutral border border-bd-subtle text-[13px] text-tx-primary outline-none focus:border-tx-primary font-mono"
+              />
+              <button
+                onClick={handleAcceptInviteSubmit}
+                disabled={isAcceptingInvite || !inviteTokenInput.trim()}
+                className="py-2.5 px-4 rounded-xl bg-surface-neutral border border-bd-subtle text-tx-primary text-[13px] font-medium hover:bg-bd-subtle transition-colors disabled:opacity-50"
+              >
+                {isAcceptingInvite ? 'Joining...' : 'Join'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* Team Management & RBAC Sheet */}
+      <BottomSheet
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        title="Team & Access Control (RBAC)"
+      >
+        <div className="py-2 space-y-5">
+          {/* Header Info */}
+          <div className="flex items-center justify-between p-3 bg-surface-neutral/40 rounded-xl border border-bd-subtle">
+            <div>
+              <span className="text-[14px] font-semibold text-tx-primary">{organization?.name}</span>
+              <p className="text-[12px] text-tx-muted mt-0.5">{teamMembers.length} active member(s)</p>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-canvas border border-bd-subtle capitalize">
+              Your Role: {role}
+            </span>
+          </div>
+
+          {/* Members List */}
+          <div>
+            <h4 className="text-[13px] font-semibold text-tx-primary mb-2">Organization Members</h4>
+            {isLoadingTeam ? (
+              <div className="py-6 text-center text-tx-muted text-sm flex items-center justify-center gap-2">
+                <RefreshCw size={14} className="animate-spin" /> Loading members...
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-56 overflow-y-auto no-scrollbar">
+                {teamMembers.map((member) => {
+                  const isCurrent = member.userId === user?.uid || member.email === user?.email;
+                  const canEdit = (role === 'owner' || role === 'admin') && !isCurrent;
+                  return (
+                    <div
+                      key={member.membershipId}
+                      className="p-3 bg-surface-neutral/50 rounded-xl border border-bd-subtle flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={`https://api.dicebear.com/7.x/notionists/svg?seed=${member.avatarSeed || member.userId}`} 
+                          alt="Avatar" 
+                          className="w-9 h-9 rounded-full bg-surface-neutral"
+                        />
+                        <div>
+                          <div className="text-[13px] font-semibold text-tx-primary flex items-center gap-1.5">
+                            {member.name || member.email.split('@')[0]}
+                            {isCurrent && <span className="text-[10px] text-tx-muted font-normal">(You)</span>}
+                          </div>
+                          <div className="text-[12px] text-tx-muted">{member.email}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {canEdit ? (
+                          <select
+                            value={member.role}
+                            onChange={async (e) => {
+                              const newRole = e.target.value as OrgRole;
+                              await changeMemberRole(member.membershipId, newRole);
+                              await loadTeamData();
+                            }}
+                            className="bg-canvas border border-bd-subtle rounded-lg px-2 py-1 text-[12px] text-tx-primary outline-none"
+                          >
+                            {role === 'owner' && <option value="owner">Owner</option>}
+                            <option value="admin">Admin</option>
+                            <option value="manager">Manager</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                        ) : (
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-medium border capitalize ${
+                            member.role === 'owner' ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' :
+                            member.role === 'admin' ? 'bg-purple-500/10 text-purple-600 border-purple-500/30' :
+                            member.role === 'manager' ? 'bg-blue-500/10 text-blue-600 border-blue-500/30' :
+                            member.role === 'member' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30' :
+                            'bg-slate-500/10 text-slate-600 border-slate-500/30'
+                          }`}>
+                            {member.role}
+                          </span>
+                        )}
+
+                        {canEdit && (
+                          <button
+                            onClick={async () => {
+                              await removeMember(member.membershipId);
+                              await loadTeamData();
+                            }}
+                            className="p-1.5 text-tx-muted hover:text-red-500 transition-colors"
+                            title="Remove Member"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Invite New Team Member (Admins & Owners) */}
+          {(role === 'owner' || role === 'admin') && (
+            <div className="pt-3 border-t border-bd-subtle space-y-2">
+              <h4 className="text-[13px] font-semibold text-tx-primary">Invite Team Member</h4>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  placeholder="collaborator@example.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl bg-surface-neutral border border-bd-subtle text-[13px] text-tx-primary outline-none focus:border-tx-primary"
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as OrgRole)}
+                  className="px-2 py-2 rounded-xl bg-surface-neutral border border-bd-subtle text-[13px] text-tx-primary outline-none"
+                >
+                  {role === 'owner' && <option value="owner">Owner</option>}
+                  <option value="admin">Admin</option>
+                  <option value="manager">Manager</option>
+                  <option value="member">Member</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+                <button
+                  onClick={handleSendInvite}
+                  disabled={!inviteEmail.trim()}
+                  className="py-2 px-3 rounded-xl bg-tx-primary text-tx-inverse text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0 flex items-center gap-1.5"
+                >
+                  <UserPlus size={14} /> Invite
+                </button>
+              </div>
+
+              {/* Pending Invitations */}
+              {teamInvitations.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  <span className="text-[12px] font-medium text-tx-muted">Pending Invitations ({teamInvitations.length})</span>
+                  {teamInvitations.map((inv) => (
+                    <div
+                      key={inv.id}
+                      className="p-2.5 bg-surface-neutral/40 rounded-xl border border-bd-subtle flex items-center justify-between text-[12px]"
+                    >
+                      <div>
+                        <div className="font-medium text-tx-primary">{inv.email}</div>
+                        <div className="text-tx-muted text-[11px]">Role: {inv.role} • Token: <span className="font-mono">{inv.token.slice(0, 10)}...</span></div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(inv.token);
+                            showToast({ message: "Invitation token copied to clipboard" });
+                          }}
+                          className="p-1 text-tx-muted hover:text-tx-primary transition-colors"
+                          title="Copy Token"
+                        >
+                          <Copy size={13} />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await revokeInvite(inv.id);
+                            await loadTeamData();
+                          }}
+                          className="p-1 text-tx-muted hover:text-red-500 transition-colors"
+                          title="Revoke Invitation"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* RBAC Role Matrix Guide */}
+          <div className="p-3 bg-surface-neutral/30 rounded-xl border border-bd-subtle text-[11px] text-tx-muted space-y-1">
+            <div className="font-semibold text-tx-primary text-[12px] mb-1">Role Permissions Matrix:</div>
+            <div>• <strong className="text-tx-primary">Owner:</strong> Full ownership, billing, transfer, all settings.</div>
+            <div>• <strong className="text-tx-primary">Admin:</strong> Team invitations, member role updates, organization settings.</div>
+            <div>• <strong className="text-tx-primary">Manager:</strong> Client & project management, templates, task delegation.</div>
+            <div>• <strong className="text-tx-primary">Member:</strong> Daily execution, tasks, time entries, notes, schedules.</div>
+            <div>• <strong className="text-tx-primary">Viewer:</strong> Strict read-only access (no modifications permitted).</div>
+          </div>
+        </div>
+      </BottomSheet>
+
+      <DataMigrationModal
+        isOpen={isMigrationModalOpen}
+        onClose={() => setIsMigrationModalOpen(false)}
+      />
 
       <ConfirmDialog
         isOpen={isClearDataOpen}

@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+coverage
+.DS_Store
+.vscode
+.idea
+data/secure_library_files/*
+!data/secure_library_files/.gitkeep

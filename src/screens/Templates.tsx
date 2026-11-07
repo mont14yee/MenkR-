@@ -216,12 +216,20 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
         <TemplateInstantiator 
           template={instantiatorTemplate}
           onDismiss={() => setInstantiatorTemplate(null)}
-          onComplete={(projectId) => {
+          onComplete={(projectId, targetScreen) => {
             setInstantiatorTemplate(null);
-            onDismiss(); // Close templates view
-            goToTab('projects'); // Might not work exactly this way if push is only for pushedScreen, but let's just close it.
-            // In MenkiR, tabs are changed via goToTab, pushed screens are changed via push.
-            // The cleanest is to dismiss Template screen.
+            onDismiss();
+            if (targetScreen === 'projects') {
+              goToTab('projects', { filterProjectId: projectId });
+            } else if (targetScreen === 'calendar') {
+              push('calendar', { filterProjectId: projectId });
+            } else if (targetScreen === 'tasks') {
+              push('tasks', { filterProjectId: projectId });
+            } else if (targetScreen === 'library') {
+              push('library', { filterProjectId: projectId });
+            } else {
+              goToTab('projects', { filterProjectId: projectId });
+            }
           }}
         />
       )}
@@ -299,14 +307,20 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
               className="w-full bg-surface-neutral/50 border border-bd-subtle rounded-xl p-3 text-[15px] text-tx-primary focus:border-blue-500 focus:outline-none transition-colors min-h-[120px] resize-none"
               placeholder="e.g., A comprehensive onboarding workflow for a new freelance design client..."
               value={aiPrompt}
-              onChange={e => setAiPrompt(e.target.value)}
+              onChange={e => {
+                setAiPrompt(e.target.value);
+                if (aiError) setAiError(null);
+              }}
               disabled={isGenerating}
             />
           </BottomSheetField>
 
           {aiError && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-              <p className="text-red-500 text-[13px]">{aiError}</p>
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-between gap-2">
+              <p className="text-red-500 text-[13px] leading-tight">{aiError}</p>
+              <Button size="sm" variant="outline" className="border-red-500/30 text-red-600 hover:bg-red-500/10 shrink-0" onClick={handleGenerateTemplate}>
+                Retry
+              </Button>
             </div>
           )}
 

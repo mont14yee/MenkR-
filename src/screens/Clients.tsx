@@ -3,9 +3,9 @@ import {
   Users, Search, Plus, Phone, Mail, MoreVertical, X, ChevronLeft, 
   MessageSquare, PhoneCall, Video, Smartphone, StickyNote, Building2,
   Briefcase, DollarSign, Tag, Send, Check, Calendar, CheckSquare, Clock, FileText,
-  FolderHeart, Activity, Calendar as CalendarIcon, File
+  FolderHeart, Activity, Calendar as CalendarIcon, File, Archive, AlertTriangle
 } from 'lucide-react';
-import { Header } from '../components/Shared';
+import { Header, ProgressBar } from '../components/Shared';
 import { BottomSheet, BottomSheetField } from '../components/BottomSheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useClients } from '../context/ClientsContext';
@@ -18,6 +18,9 @@ import { useCalendar } from '../context/CalendarContext';
 import { useLibrary } from '../context/LibraryContext';
 import { useTimeTracker } from '../context/TimeTrackerContext';
 import { usePreferences } from '../context/PreferencesContext';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { logAuditEvent, fetchAuditEvents } from '../services/activityService';
 import { Client, ClientStatus, MessageChannel, ProjectItem, TaskItem, EventItem, LibraryItem } from '../types';
 import { formatCurrency, formatCurrencyCompact, getCurrencySymbol } from '../utils/currency';
 import { generateId } from '../utils/id';
@@ -43,15 +46,18 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   const { messagesForClient, addMessage } = useMessages();
   const { projects, addProject } = useProjects();
   const { revenues } = useRevenue();
-  const { tasks, addTask } = useTasks();
+  const { tasks, addTask, completeTask } = useTasks();
   const { events, addEvent } = useCalendar();
   const { library: libraryItems, addLibraryItem } = useLibrary();
   const { timeEntries } = useTimeTracker();
   const { preferences } = usePreferences();
-  const { push, goToTab } = useNavigation();
+  const { push, goToTab, navigationOptions } = useNavigation();
+  const { role, idToken, organization } = useAuth();
+  const { showToast } = useToast();
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(initialClientId || null);
   const [filter, setFilter] = useState<'all' | ClientStatus>('all');
+  const [taskFilter, setTaskFilter] = useState<'all' | 'active' | 'done'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -59,6 +65,7 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   // Sheet / Modals
   const [isSheetOpen, setIsSheetOpen] = useState(!!initialOpenCreate);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
 
   // Forms
@@ -75,17 +82,34 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   // Quick Action Sheets
   const [activeActionSheet, setActiveActionSheet] = useState<'project' | 'task' | 'event' | 'library' | null>(null);
   
-  const [projectForm, setProjectForm] = useState({ name: '', priority: 'high' as 'high' | 'low', tone: 'neutral' as any });
-  const [taskForm, setTaskForm] = useState({ title: '', priority: 'Medium' as 'Low'|'Medium'|'High', categoryId: '' });
+  const [projectForm, setProjectForm] = useState({ name: '', priority: 'high' as 'high' | 'low', tone: 'neutral' as any, dueDate: '', budget: '' });
+  const [taskForm, setTaskForm] = useState({ title: '', priority: 'Medium' as 'Low'|'Medium'|'High', categoryId: '', projectId: '', dueDate: '' });
   const [eventForm, setEventForm] = useState({ title: '', date: new Date().toISOString().split('T')[0], type: 'Meeting' as any });
   const [libForm, setLibForm] = useState({ name: '', type: 'link' as 'file'|'link'|'note', category: 'Documents' as any, urlOrReference: '' });
+  const [auditEventsList, setAuditEventsList] = useState<any[]>([]);
 
   useEffect(() => {
-    if (initialClientId) setSelectedClientId(initialClientId);
-  }, [initialClientId]);
+    if (initialClientId) {
+      setSelectedClientId(initialClientId);
+    } else if (navigationOptions?.clientId) {
+      setSelectedClientId(navigationOptions.clientId);
+    } else if (navigationOptions?.filterClientId) {
+      setSelectedClientId(navigationOptions.filterClientId);
+    }
+  }, [initialClientId, navigationOptions?.clientId, navigationOptions?.filterClientId]);
+
   useEffect(() => {
     if (initialOpenCreate) setIsSheetOpen(true);
   }, [initialOpenCreate]);
+
+  // Load real audit events for client
+  useEffect(() => {
+    if (selectedClientId && activeTab === 'activity') {
+      fetchAuditEvents(idToken, organization?.id || null, { entityType: 'client', entityId: selectedClientId })
+        .then(setAuditEventsList)
+        .catch(() => {});
+    }
+  }, [selectedClientId, activeTab, idToken, organization?.id]);
   
   // Set default categoryId for tasks
   useEffect(() => {
@@ -133,16 +157,24 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
     return { activeProj, openTasks, upcomingEvents: upcomingEvents.length, totalRevenue, docCount: clientData.library.length };
   }, [clientData]);
 
+  const displayedClientTasks = useMemo(() => {
+    if (!clientData) return [];
+    if (taskFilter === 'active') return clientData.tasks.filter(t => t.status !== 'done');
+    if (taskFilter === 'done') return clientData.tasks.filter(t => t.status === 'done');
+    return clientData.tasks;
+  }, [clientData, taskFilter]);
+
   const combinedActivity = useMemo(() => {
     if (!clientData) return [];
-    type ActivityItem = { id: string; type: 'message'|'time'|'event'|'revenue'; date: Date; data: any };
+    type ActivityItem = { id: string; type: 'message'|'time'|'event'|'revenue'|'audit'; date: Date; data: any };
     const items: ActivityItem[] = [];
     clientData.messages.forEach(m => items.push({ id: m.id, type: 'message', date: new Date(m.createdAt), data: m }));
     clientData.time.forEach(t => items.push({ id: t.id, type: 'time', date: new Date(t.startedAt), data: t }));
     clientData.events.filter(e => e.status === 'completed').forEach(e => items.push({ id: e.id, type: 'event', date: new Date(e.date + 'T00:00:00'), data: e }));
     clientData.revenues.forEach(r => items.push({ id: r.id, type: 'revenue', date: new Date(r.date + 'T00:00:00'), data: r }));
+    auditEventsList.forEach(ae => items.push({ id: ae.id, type: 'audit', date: new Date(ae.createdAt), data: ae }));
     return items.sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [clientData]);
+  }, [clientData, auditEventsList]);
 
   const counts = useMemo(() => ({
     all: clients.length,
@@ -155,8 +187,10 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
     if (!form.name.trim()) return;
     if (editingClientId) {
       updateClient(editingClientId, form);
+      logAuditEvent(idToken, organization?.id || null, 'client.updated', 'client', editingClientId, { name: form.name });
     } else {
-      addClient({ ...form, avatarSeed: generateId(), createdAt: new Date().toISOString() });
+      const newId = addClient({ ...form, avatarSeed: generateId(), createdAt: new Date().toISOString() });
+      logAuditEvent(idToken, organization?.id || null, 'client.created', 'client', newId, { name: form.name });
     }
     if (addAnother) {
       setForm(initialFormState);
@@ -166,11 +200,39 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
     }
   };
 
+  const confirmArchive = () => {
+    if (selectedClientId) {
+      updateClient(selectedClientId, { status: 'past', isArchived: true });
+      logAuditEvent(idToken, organization?.id || null, 'client.archived', 'client', selectedClientId, { name: selectedClient?.name });
+      showToast({ message: 'Client safely archived' });
+      setIsArchiveOpen(false);
+    }
+  };
+
   const confirmDelete = () => {
     if (selectedClientId) {
+      const projCount = clientData?.projects.length || 0;
+      const taskCount = clientData?.tasks.length || 0;
       deleteClient(selectedClientId);
+      logAuditEvent(idToken, organization?.id || null, 'client.deleted', 'client', selectedClientId, {
+        name: selectedClient?.name,
+        unlinkedProjects: projCount,
+        unlinkedTasks: taskCount,
+      });
+      showToast({ message: 'Client deleted' });
       setSelectedClientId(null);
+      setIsDeleteOpen(false);
     }
+  };
+
+  const handleToggleTask = (t: TaskItem) => {
+    completeTask(t.id);
+    const newStatus = t.status === 'done' ? 'active' : 'done';
+    logAuditEvent(idToken, organization?.id || null, `task.${newStatus}`, 'client', selectedClientId || undefined, {
+      taskId: t.id,
+      title: t.title,
+    });
+    showToast({ message: `Task marked as ${newStatus}` });
   };
 
   const handleSendMsg = () => {
@@ -192,25 +254,45 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   // Creation Handlers
   const handleCreateProject = () => {
     if (!projectForm.name || !selectedClientId) return;
-    addProject({
-      ...projectForm,
+    const newProjId = addProject({
+      name: projectForm.name,
+      priority: projectForm.priority,
+      tone: projectForm.tone,
       completionPct: 0,
       clientId: selectedClientId,
-      status: 'active'
+      status: 'active',
+      dueDate: projectForm.dueDate || undefined,
+      budget: projectForm.budget ? Number(projectForm.budget) : undefined,
     });
+    logAuditEvent(idToken, organization?.id || null, 'project.created', 'client', selectedClientId, {
+      projectId: newProjId,
+      projectName: projectForm.name,
+    });
+    showToast({ message: 'Project created for client' });
     setActiveActionSheet(null);
-    setProjectForm({ name: '', priority: 'high', tone: 'neutral' });
+    setProjectForm({ name: '', priority: 'high', tone: 'neutral', dueDate: '', budget: '' });
   };
 
   const handleCreateTask = () => {
     if (!taskForm.title || !taskForm.categoryId || !selectedClientId) return;
-    addTask({
-      ...taskForm,
+    const newTaskId = addTask({
+      title: taskForm.title,
+      priority: taskForm.priority,
+      categoryId: taskForm.categoryId,
       status: 'active',
-      clientId: selectedClientId
+      clientId: selectedClientId,
+      projectId: taskForm.projectId || undefined,
+      dueDate: taskForm.dueDate || undefined,
+      date: taskForm.dueDate || new Date().toISOString(),
     });
+    logAuditEvent(idToken, organization?.id || null, 'task.created', 'client', selectedClientId, {
+      taskId: newTaskId,
+      taskTitle: taskForm.title,
+      projectId: taskForm.projectId,
+    });
+    showToast({ message: 'Task added for client' });
     setActiveActionSheet(null);
-    setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId });
+    setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId, projectId: '', dueDate: '' });
   };
 
   const handleCreateEvent = () => {
@@ -253,34 +335,78 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
           </div>
         } />
         {isSearchOpen && (
-          <div className="px-4 py-2">
+          <div className="px-4 py-2 border-b border-bd-subtle">
             <div className="relative">
-              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-tx-muted" />
-              <input type="text" autoFocus value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search clients..." className="w-full bg-surface-neutral rounded-xl py-2.5 pl-10 pr-10 text-[15px] outline-none" />
-              {searchQuery && <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-tx-muted p-1"><X size={16} /></button>}
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-tx-muted" />
+              <input
+                type="text"
+                autoFocus
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search clients..."
+                className="w-full bg-surface-neutral border border-bd-subtle rounded-xl py-2 pl-9 pr-9 text-sm text-tx-primary placeholder:text-tx-muted focus:outline-none focus:ring-1 focus:ring-tx-primary"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-tx-muted hover:text-tx-primary p-1">
+                  <X size={15} />
+                </button>
+              )}
             </div>
           </div>
         )}
-        <div className="px-4 py-3 overflow-x-auto no-scrollbar flex gap-2">
+        <div className="px-4 py-2.5 overflow-x-auto no-scrollbar flex gap-1.5 border-b border-bd-subtle">
           {(['all', 'lead', 'active', 'past'] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[14px] font-medium transition-colors border ${filter === f ? 'bg-tx-primary text-tx-inverse border-tx-primary' : 'bg-surface-neutral text-tx-secondary border-transparent'}`}>
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`whitespace-nowrap px-3 py-1 rounded-lg text-xs font-medium transition-all border ${
+                filter === f
+                  ? 'bg-tx-primary text-tx-inverse border-tx-primary shadow-xs'
+                  : 'bg-canvas text-tx-muted border-bd-subtle hover:text-tx-primary hover:bg-surface-neutral'
+              }`}
+            >
               <span className="capitalize">{f}</span>
-              <span className={`ml-1.5 text-[12px] ${filter === f ? 'text-tx-inverse/70' : 'text-tx-muted'}`}>{counts[f]}</span>
+              <span className={`ml-1.5 font-mono tabular-nums text-[11px] ${filter === f ? 'text-accent-primary font-bold' : 'text-tx-muted'}`}>
+                {counts[f]}
+              </span>
             </button>
           ))}
         </div>
-        <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-6 flex flex-col gap-3">
-          {filteredClients.map(c => (
-            <button key={c.id} onClick={() => { setSelectedClientId(c.id); setActiveTab('overview'); }} className={`w-full flex items-center gap-3 p-3 rounded-2xl border transition-colors text-left ${selectedClientId === c.id ? 'bg-surface-hover border-accent-primary/50' : 'bg-canvas border-bd-subtle hover:border-accent-primary/30'}`}>
-              <img src={`https://api.dicebear.com/7.x/notionists/svg?seed=${c.avatarSeed}`} alt={c.name} className="w-12 h-12 rounded-full bg-surface-neutral object-cover shrink-0" />
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-[16px] text-tx-primary truncate leading-tight">{c.name}</h3>
-                {c.company && <div className="text-[14px] text-tx-muted truncate mt-0.5">{c.company}</div>}
-              </div>
-              <div className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase border ${STATUS_COLORS[c.status]}`}>{c.status}</div>
-            </button>
-          ))}
-          {filteredClients.length === 0 && <div className="py-12 text-center text-tx-muted">No clients found.</div>}
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-6 flex flex-col gap-2 mt-2">
+          {filteredClients.map(c => {
+            const isSelected = selectedClientId === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => { setSelectedClientId(c.id); setActiveTab('overview'); }}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left group ${
+                  isSelected
+                    ? 'bg-canvas-card border-accent-primary shadow-xs ring-1 ring-accent-primary/50'
+                    : 'bg-canvas border-bd-subtle hover:border-bd-strong hover:bg-surface-hover'
+                }`}
+              >
+                <img
+                  src={`https://api.dicebear.com/7.x/notionists/svg?seed=${c.avatarSeed}`}
+                  alt={c.name}
+                  className="w-11 h-11 rounded-lg bg-surface-neutral object-cover shrink-0 border border-bd-subtle/70"
+                />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-sm text-tx-primary truncate leading-tight group-hover:text-tx-primary">
+                    {c.name}
+                  </h3>
+                  {c.company && (
+                    <div className="text-xs text-tx-muted truncate mt-0.5">{c.company}</div>
+                  )}
+                </div>
+                <div className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wider uppercase border ${STATUS_COLORS[c.status]}`}>
+                  {c.status}
+                </div>
+              </button>
+            );
+          })}
+          {filteredClients.length === 0 && (
+            <div className="py-12 text-center text-sm text-tx-muted">No clients found.</div>
+          )}
         </div>
       </div>
 
@@ -303,14 +429,52 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
                       <div className="fixed inset-0 z-40" onClick={() => setIsMenuOpen(false)} />
                       <div className="absolute top-full right-0 mt-1 w-48 bg-canvas border border-bd-subtle rounded-xl shadow-xl z-50 overflow-hidden">
                         <button onClick={() => { 
+                            if (role === 'viewer') {
+                              showToast({ message: 'Viewer role has read-only access' });
+                              return;
+                            }
                             setForm({
                               name: selectedClient.name, company: selectedClient.company || '',
                               email: selectedClient.email || '', phone: selectedClient.phone || '',
                               status: selectedClient.status, tags: [...(selectedClient.tags || [])], notes: selectedClient.notes || ''
                             });
                             setEditingClientId(selectedClient.id); setIsMenuOpen(false); setIsSheetOpen(true); 
-                          }} className="w-full text-left px-4 py-3 text-[15px] font-medium text-tx-primary hover:bg-surface-neutral">Edit Client</button>
-                        <button onClick={() => { setIsMenuOpen(false); setIsDeleteOpen(true); }} className="w-full text-left px-4 py-3 text-[15px] font-medium text-red-500 hover:bg-red-500/10">Delete Client</button>
+                          }} 
+                          disabled={role === 'viewer'}
+                          className={`w-full text-left px-4 py-3 text-[14px] font-medium text-tx-primary hover:bg-surface-neutral flex items-center justify-between ${role === 'viewer' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <span>Edit Client</span>
+                        </button>
+                        <button 
+                          onClick={() => { 
+                            if (role === 'viewer') {
+                              showToast({ message: 'Viewer role has read-only access' });
+                              return;
+                            }
+                            setIsMenuOpen(false); 
+                            setIsArchiveOpen(true); 
+                          }} 
+                          disabled={role === 'viewer'}
+                          className={`w-full text-left px-4 py-3 text-[14px] font-medium text-tx-secondary hover:bg-surface-neutral flex items-center gap-2 ${role === 'viewer' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <Archive size={15} />
+                          <span>Archive Client</span>
+                        </button>
+                        <button 
+                          onClick={() => { 
+                            if (role === 'viewer') {
+                              showToast({ message: 'Viewer role has read-only access' });
+                              return;
+                            }
+                            setIsMenuOpen(false); 
+                            setIsDeleteOpen(true); 
+                          }} 
+                          disabled={role === 'viewer'}
+                          className={`w-full text-left px-4 py-3 text-[14px] font-medium text-red-500 hover:bg-red-500/10 flex items-center gap-2 ${role === 'viewer' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <AlertTriangle size={15} />
+                          <span>Delete Client</span>
+                        </button>
                       </div>
                     </>
                   )}
@@ -365,43 +529,55 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
                 <div className="space-y-6">
                   {/* Stats Grid */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-canvas border border-bd-subtle rounded-2xl p-4 flex flex-col">
-                      <div className="flex items-center justify-between mb-2"><span className="text-[13px] text-tx-muted font-medium">Active Projects</span><Briefcase size={16} className="text-blue-500" /></div>
-                      <span className="text-2xl font-bold text-tx-primary">{stats.activeProj}</span>
+                    <div className="bg-canvas border border-bd-subtle rounded-xl p-4 flex flex-col shadow-xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-tx-muted uppercase tracking-wider">Active Projects</span>
+                        <Briefcase size={15} className="text-tx-secondary" />
+                      </div>
+                      <span className="text-2xl font-bold font-mono tabular-nums text-tx-primary">{stats.activeProj}</span>
                     </div>
-                    <div className="bg-canvas border border-bd-subtle rounded-2xl p-4 flex flex-col">
-                      <div className="flex items-center justify-between mb-2"><span className="text-[13px] text-tx-muted font-medium">Open Tasks</span><CheckSquare size={16} className="text-orange-500" /></div>
-                      <span className="text-2xl font-bold text-tx-primary">{stats.openTasks}</span>
+                    <div className="bg-canvas border border-bd-subtle rounded-xl p-4 flex flex-col shadow-xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-tx-muted uppercase tracking-wider">Open Tasks</span>
+                        <CheckSquare size={15} className="text-orange-600" />
+                      </div>
+                      <span className="text-2xl font-bold font-mono tabular-nums text-tx-primary">{stats.openTasks}</span>
                     </div>
-                    <div className="bg-canvas border border-bd-subtle rounded-2xl p-4 flex flex-col">
-                      <div className="flex items-center justify-between mb-2"><span className="text-[13px] text-tx-muted font-medium">Total Billed</span><DollarSign size={16} className="text-emerald-500" /></div>
-                      <span className="text-2xl font-bold text-tx-primary">{formatCurrencyCompact(stats.totalRevenue, preferences.currency)}</span>
+                    <div className="bg-canvas border border-bd-subtle rounded-xl p-4 flex flex-col shadow-xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-tx-muted uppercase tracking-wider">Total Billed</span>
+                        <DollarSign size={15} className="text-emerald-600" />
+                      </div>
+                      <span className="text-2xl font-bold font-mono tabular-nums text-tx-primary">{formatCurrencyCompact(stats.totalRevenue, preferences.currency)}</span>
                     </div>
-                    <div className="bg-canvas border border-bd-subtle rounded-2xl p-4 flex flex-col">
-                      <div className="flex items-center justify-between mb-2"><span className="text-[13px] text-tx-muted font-medium">Upcoming Events</span><CalendarIcon size={16} className="text-purple-500" /></div>
-                      <span className="text-2xl font-bold text-tx-primary">{stats.upcomingEvents}</span>
+                    <div className="bg-canvas border border-bd-subtle rounded-xl p-4 flex flex-col shadow-xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-tx-muted uppercase tracking-wider">Upcoming</span>
+                        <CalendarIcon size={15} className="text-tx-secondary" />
+                      </div>
+                      <span className="text-2xl font-bold font-mono tabular-nums text-tx-primary">{stats.upcomingEvents}</span>
                     </div>
                   </div>
 
                   {/* Quick Actions */}
                   <div>
-                    <h3 className="text-[15px] font-bold text-tx-primary mb-3">Quick Actions</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <button onClick={() => setActiveActionSheet('project')} className="bg-canvas border border-bd-subtle hover:border-accent-primary/50 rounded-xl p-3 flex items-center gap-2 transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0"><Briefcase size={16}/></div>
-                        <span className="text-[14px] font-medium text-tx-primary">New Project</span>
+                    <h3 className="text-xs font-semibold text-tx-muted uppercase tracking-wider mb-2.5">Quick Actions</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                      <button onClick={() => setActiveActionSheet('project')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                        <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><Briefcase size={16}/></div>
+                        <span className="text-xs font-semibold text-tx-primary">New Project</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('task')} className="bg-canvas border border-bd-subtle hover:border-accent-primary/50 rounded-xl p-3 flex items-center gap-2 transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center shrink-0"><CheckSquare size={16}/></div>
-                        <span className="text-[14px] font-medium text-tx-primary">New Task</span>
+                      <button onClick={() => setActiveActionSheet('task')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                        <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CheckSquare size={16}/></div>
+                        <span className="text-xs font-semibold text-tx-primary">New Task</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('event')} className="bg-canvas border border-bd-subtle hover:border-accent-primary/50 rounded-xl p-3 flex items-center gap-2 transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center shrink-0"><CalendarIcon size={16}/></div>
-                        <span className="text-[14px] font-medium text-tx-primary">Schedule</span>
+                      <button onClick={() => setActiveActionSheet('event')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                        <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CalendarIcon size={16}/></div>
+                        <span className="text-xs font-semibold text-tx-primary">Schedule</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('library')} className="bg-canvas border border-bd-subtle hover:border-accent-primary/50 rounded-xl p-3 flex items-center gap-2 transition-colors">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0"><FileText size={16}/></div>
-                        <span className="text-[14px] font-medium text-tx-primary">Add Doc</span>
+                      <button onClick={() => setActiveActionSheet('library')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                        <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><FileText size={16}/></div>
+                        <span className="text-xs font-semibold text-tx-primary">Add File</span>
                       </button>
                     </div>
                   </div>
@@ -443,16 +619,24 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
                           {act.type === 'time' && <Clock size={18} />}
                           {act.type === 'event' && <CalendarIcon size={18} />}
                           {act.type === 'revenue' && <DollarSign size={18} />}
+                          {act.type === 'audit' && <Activity size={18} className="text-accent-primary" />}
                         </div>
                         <div className="flex-1">
                           <div className="flex justify-between items-start mb-1">
-                            <span className="text-[14px] font-medium capitalize text-tx-primary">{act.type}</span>
+                            <span className="text-[14px] font-medium capitalize text-tx-primary">
+                              {act.type === 'audit' ? act.data.action.replace('.', ' ') : act.type}
+                            </span>
                             <span className="text-[12px] text-tx-muted">{act.date.toLocaleDateString()}</span>
                           </div>
                           {act.type === 'message' && <p className="text-[14px] text-tx-secondary">{act.data.body}</p>}
                           {act.type === 'time' && <p className="text-[14px] text-tx-secondary">Logged {Math.round(act.data.durationSeconds/60)} mins {act.data.note && `- ${act.data.note}`}</p>}
                           {act.type === 'event' && <p className="text-[14px] text-tx-secondary">Completed: {act.data.title}</p>}
                           {act.type === 'revenue' && <p className="text-[14px] text-tx-secondary">Payment: {formatCurrency(act.data.amount, preferences.currency)}</p>}
+                          {act.type === 'audit' && (
+                            <p className="text-[14px] text-tx-secondary">
+                              {act.data.metadata?.taskTitle || act.data.metadata?.projectName || act.data.metadata?.title || 'System action recorded'}
+                            </p>
+                          )}
                         </div>
                       </div>
                     ))
@@ -462,39 +646,157 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
 
               {activeTab === 'projects' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('project')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button 
+                    onClick={() => {
+                      if (role === 'viewer') {
+                        showToast({ message: 'Viewer role has read-only access' });
+                        return;
+                      }
+                      setActiveActionSheet('project');
+                    }} 
+                    disabled={role === 'viewer'}
+                    className={`w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium transition-colors mb-2 ${role === 'viewer' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-surface-hover'}`}
+                  >
                     <Plus size={18} /> New Project
                   </button>
                   {clientData.projects.length === 0 ? (
-                    <div className="text-center py-8 text-tx-muted">No linked projects.</div>
+                    <div className="text-center py-12 bg-canvas rounded-2xl border border-bd-subtle p-6">
+                      <Briefcase size={28} className="mx-auto text-tx-muted mb-2 opacity-50" />
+                      <div className="text-sm font-semibold text-tx-primary mb-1">No linked projects</div>
+                      <p className="text-xs text-tx-muted max-w-xs mx-auto">Create a project for {selectedClient.name} to track progress, milestones, and deliverables.</p>
+                    </div>
                   ) : (
-                    clientData.projects.map(p => (
-                      <div key={p.id} onClick={() => goToTab('projects', { filterProjectId: p.id })} className="bg-canvas border border-bd-subtle rounded-xl p-4 flex justify-between items-center cursor-pointer hover:border-accent-primary/50 transition-colors">
-                        <div>
-                          <div className="text-[15px] font-bold text-tx-primary mb-1">{p.name}</div>
-                          <div className="text-[13px] text-tx-muted uppercase tracking-wider">{p.status}</div>
+                    clientData.projects.map(p => {
+                      const projTasks = tasks.filter(t => t.projectId === p.id);
+                      const openCount = projTasks.filter(t => t.status !== 'done').length;
+                      return (
+                        <div 
+                          key={p.id} 
+                          onClick={() => goToTab('projects', { filterProjectId: p.id })} 
+                          className="bg-canvas border border-bd-subtle hover:border-accent-primary/60 rounded-xl p-4 cursor-pointer transition-all shadow-xs group"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-2.5">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[15px] font-bold text-tx-primary group-hover:text-tx-primary">{p.name}</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider border ${STATUS_COLORS[p.status || 'active'] || 'bg-surface-neutral text-tx-muted'}`}>
+                                  {p.status || 'active'}
+                                </span>
+                                {p.priority === 'high' && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-600 border border-orange-500/20">
+                                    HIGH
+                                  </span>
+                                )}
+                              </div>
+                              {p.dueDate && (
+                                <div className="text-xs text-tx-muted mt-1 flex items-center gap-1.5">
+                                  <CalendarIcon size={12} />
+                                  <span>Due {p.dueDate}</span>
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-xs font-mono font-bold text-tx-primary">{p.completionPct}%</span>
+                          </div>
+
+                          <div className="w-full bg-surface-neutral h-1.5 rounded-full overflow-hidden mb-3">
+                            <div className="bg-accent-primary h-full transition-all duration-300" style={{ width: `${Math.min(100, Math.max(0, p.completionPct))}%` }} />
+                          </div>
+
+                          <div className="flex items-center justify-between text-xs text-tx-muted pt-2 border-t border-bd-subtle/50">
+                            <span className="flex items-center gap-1.5">
+                              <CheckSquare size={13} />
+                              <span className="font-mono">{openCount}</span> open {openCount === 1 ? 'task' : 'tasks'}
+                            </span>
+                            <span className="text-tx-primary font-medium flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                              Open Workspace <ChevronLeft size={14} className="rotate-180" />
+                            </span>
+                          </div>
                         </div>
-                        <ChevronLeft size={20} className="text-tx-muted rotate-180" />
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
 
               {activeTab === 'tasks' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('task')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
-                    <Plus size={18} /> New Task
-                  </button>
-                  {clientData.tasks.length === 0 ? (
-                    <div className="text-center py-8 text-tx-muted">No open tasks.</div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex bg-surface-neutral p-1 rounded-xl text-xs font-medium">
+                      {(['all', 'active', 'done'] as const).map(tf => (
+                        <button
+                          key={tf}
+                          onClick={() => setTaskFilter(tf)}
+                          className={`px-3 py-1 rounded-lg capitalize transition-all ${taskFilter === tf ? 'bg-canvas text-tx-primary shadow-xs font-bold' : 'text-tx-muted hover:text-tx-primary'}`}
+                        >
+                          {tf}
+                        </button>
+                      ))}
+                    </div>
+                    <button 
+                      onClick={() => {
+                        if (role === 'viewer') {
+                          showToast({ message: 'Viewer role has read-only access' });
+                          return;
+                        }
+                        setActiveActionSheet('task');
+                      }} 
+                      disabled={role === 'viewer'}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 bg-tx-primary text-tx-inverse rounded-xl text-xs font-semibold transition-opacity ${role === 'viewer' ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
+                    >
+                      <Plus size={14} /> Add Task
+                    </button>
+                  </div>
+
+                  {displayedClientTasks.length === 0 ? (
+                    <div className="text-center py-12 bg-canvas rounded-2xl border border-bd-subtle p-6">
+                      <CheckSquare size={28} className="mx-auto text-tx-muted mb-2 opacity-50" />
+                      <div className="text-sm font-semibold text-tx-primary mb-1">No tasks in this view</div>
+                      <p className="text-xs text-tx-muted max-w-xs mx-auto">Create a task linked to this client and optional project.</p>
+                    </div>
                   ) : (
-                    clientData.tasks.map(t => (
-                      <div key={t.id} className="bg-canvas border border-bd-subtle rounded-xl p-3 flex items-center gap-3">
-                        <div className={`w-4 h-4 rounded border shrink-0 ${t.status === 'done' ? 'bg-emerald-500 border-emerald-500' : 'border-tx-muted'}`} />
-                        <div className={`flex-1 text-[15px] font-medium ${t.status === 'done' ? 'text-tx-muted line-through' : 'text-tx-primary'}`}>{t.title}</div>
-                      </div>
-                    ))
+                    displayedClientTasks.map(t => {
+                      const parentProj = projects.find(p => p.id === t.projectId);
+                      return (
+                        <div key={t.id} className="bg-canvas border border-bd-subtle rounded-xl p-3.5 flex items-start gap-3 hover:border-bd-strong transition-all shadow-xs">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleTask(t)}
+                            disabled={role === 'viewer'}
+                            className={`w-5 h-5 mt-0.5 rounded border shrink-0 flex items-center justify-center transition-colors cursor-pointer ${t.status === 'done' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-tx-muted hover:border-tx-primary'}`}
+                            aria-label={`Toggle task "${t.title}"`}
+                          >
+                            {t.status === 'done' && <Check size={12} className="stroke-[3]" />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[14px] font-medium leading-tight ${t.status === 'done' ? 'text-tx-muted line-through' : 'text-tx-primary'}`}>
+                                {t.title}
+                              </span>
+                              {parentProj && (
+                                <button
+                                  onClick={() => goToTab('projects', { filterProjectId: parentProj.id })}
+                                  className="text-[11px] px-2 py-0.5 rounded-md font-medium bg-surface-neutral text-tx-secondary hover:text-tx-primary hover:border-bd-strong border border-bd-subtle transition-colors flex items-center gap-1"
+                                >
+                                  <Briefcase size={10} />
+                                  <span className="truncate max-w-[120px]">{parentProj.name}</span>
+                                </button>
+                              )}
+                              {t.priority && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${t.priority === 'High' ? 'bg-orange-500/10 text-orange-600' : 'bg-surface-neutral text-tx-muted'}`}>
+                                  {t.priority}
+                                </span>
+                              )}
+                            </div>
+                            {(t.dueDate || t.date) && (
+                              <div className="text-xs text-tx-muted mt-1 flex items-center gap-1">
+                                <Clock size={11} />
+                                <span>Due {t.dueDate || t.date}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               )}
@@ -635,6 +937,14 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
       {/* Action Sheets */}
       <BottomSheet isOpen={activeActionSheet === 'project'} onClose={() => setActiveActionSheet(null)} title="New Project" onSave={handleCreateProject} saveLabel="Create Project">
         <BottomSheetField label="Project Name *"><input type="text" value={projectForm.name} onChange={e => setProjectForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Q4 Website Redesign" /></BottomSheetField>
+        <div className="grid grid-cols-2 gap-3">
+          <BottomSheetField label="Due Date">
+            <input type="date" value={projectForm.dueDate} onChange={e => setProjectForm(f => ({ ...f, dueDate: e.target.value }))} />
+          </BottomSheetField>
+          <BottomSheetField label={`Budget (${preferences.currency})`}>
+            <input type="number" min="0" step="100" value={projectForm.budget} onChange={e => setProjectForm(f => ({ ...f, budget: e.target.value }))} placeholder="5000" />
+          </BottomSheetField>
+        </div>
         <BottomSheetField label="Priority">
           <div className="flex bg-surface-neutral p-1 rounded-xl">
             {(['high', 'low'] as const).map(p => (
@@ -646,10 +956,36 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
 
       <BottomSheet isOpen={activeActionSheet === 'task'} onClose={() => setActiveActionSheet(null)} title="New Task" onSave={handleCreateTask} saveLabel="Add Task">
         <BottomSheetField label="Task Title *"><input type="text" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Send proposal" /></BottomSheetField>
-        <BottomSheetField label="Category">
-          <select value={taskForm.categoryId} onChange={e => setTaskForm(f => ({...f, categoryId: e.target.value}))}>
-            {preferences.categories.filter(c => c.scope === 'task').map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
+        {clientData && clientData.projects.length > 0 && (
+          <BottomSheetField label="Link to Project (Optional)">
+            <select 
+              value={taskForm.projectId} 
+              onChange={e => setTaskForm(f => ({ ...f, projectId: e.target.value }))}
+              className="w-full bg-surface-neutral border border-bd-subtle rounded-xl p-3 text-sm text-tx-primary outline-none"
+            >
+              <option value="">No Project (General Client Task)</option>
+              {clientData.projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </BottomSheetField>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <BottomSheetField label="Category">
+            <select value={taskForm.categoryId} onChange={e => setTaskForm(f => ({...f, categoryId: e.target.value}))}>
+              {preferences.categories.filter(c => c.scope === 'task').map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </BottomSheetField>
+          <BottomSheetField label="Due Date">
+            <input type="date" value={taskForm.dueDate} onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))} />
+          </BottomSheetField>
+        </div>
+        <BottomSheetField label="Priority">
+          <div className="flex bg-surface-neutral p-1 rounded-xl">
+            {(['Low', 'Medium', 'High'] as const).map(p => (
+              <button key={p} onClick={() => setTaskForm(f => ({...f, priority: p}))} className={`flex-1 py-1.5 text-[14px] font-medium rounded-lg capitalize transition-all ${taskForm.priority === p ? 'bg-canvas text-tx-primary shadow-sm' : 'text-tx-muted'}`}>{p}</button>
+            ))}
+          </div>
         </BottomSheetField>
       </BottomSheet>
 
@@ -663,7 +999,31 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
         <BottomSheetField label="Link / URL"><input type="url" value={libForm.urlOrReference} onChange={e => setLibForm(f => ({ ...f, urlOrReference: e.target.value }))} placeholder="https://..." /></BottomSheetField>
       </BottomSheet>
 
-      <ConfirmDialog isOpen={isDeleteOpen} onCancel={() => setIsDeleteOpen(false)} onConfirm={confirmDelete} title="Delete Client" body={`Are you sure you want to delete ${selectedClient?.name}? Linked records will remain.`} confirmLabel="Delete" />
+      {/* Safe Deletion Dialog with Dependency Warning */}
+      <ConfirmDialog 
+        isOpen={isDeleteOpen} 
+        onCancel={() => setIsDeleteOpen(false)} 
+        onConfirm={confirmDelete} 
+        title="Delete Client" 
+        body={
+          clientData && (clientData.projects.length > 0 || clientData.tasks.length > 0)
+            ? `Warning: ${selectedClient?.name} has ${clientData.projects.length} linked project(s) and ${clientData.tasks.length} task(s). Deleting will unlink these records. We recommend Archiving instead to preserve project history.`
+            : `Are you sure you want to delete ${selectedClient?.name}? This action cannot be undone.`
+        } 
+        confirmLabel={clientData && (clientData.projects.length > 0 || clientData.tasks.length > 0) ? "Delete & Unlink" : "Delete"}
+        danger={true}
+      />
+
+      {/* Safe Archive Dialog */}
+      <ConfirmDialog
+        isOpen={isArchiveOpen}
+        onCancel={() => setIsArchiveOpen(false)}
+        onConfirm={confirmArchive}
+        title="Archive Client"
+        body={`Archive ${selectedClient?.name}? All ${clientData?.projects.length || 0} linked project(s) and ${clientData?.tasks.length || 0} task(s) will remain intact.`}
+        confirmLabel="Archive Client"
+        danger={false}
+      />
     </div>
   );
 }

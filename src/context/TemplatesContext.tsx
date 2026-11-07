@@ -5,7 +5,7 @@ import { generateId } from '../utils/id';
 
 interface TemplatesContextType {
   templates: TemplateItem[];
-  addTemplate: (template: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addTemplate: (template: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => string;
   updateTemplate: (id: string, updates: Partial<TemplateItem>) => void;
   deleteTemplate: (id: string) => void;
 }
@@ -24,6 +24,7 @@ export function TemplatesProvider({ children }: { children: ReactNode }) {
       updatedAt: now,
     };
     setTemplates((prev) => [...prev, newTemplate]);
+    return newTemplate.id;
   };
 
   const updateTemplate = (id: string, updates: Partial<TemplateItem>) => {

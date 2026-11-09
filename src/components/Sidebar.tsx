@@ -13,6 +13,7 @@ import { useCalendar } from '../context/CalendarContext';
 import { useTimeTracker } from '../context/TimeTrackerContext';
 import { useRevenue } from '../context/RevenueContext';
 import { useToast } from '../context/ToastContext';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface SidebarProps {
   activeTab: TabState;
@@ -446,6 +447,15 @@ export function Sidebar({
               </div>
             </div>
           )}
+        </div>
+
+        {/* PWA Desktop Install */}
+        <div className="mb-1">
+          <PWAInstallButton 
+            className="w-full text-xs justify-start px-2.5 py-1.5" 
+            variant="subtle" 
+            showLabel={!isCollapsed} 
+          />
         </div>
 
         {/* Collapse Toggle */}

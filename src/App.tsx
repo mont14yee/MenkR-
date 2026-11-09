@@ -21,6 +21,7 @@ import { Onboarding } from './components/Onboarding';
 import { CommandPaletteProvider } from './context/CommandPaletteContext';
 import { CommandPalette } from './components/CommandPalette';
 import { AuthProvider } from './context/AuthContext';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
 import { Loader2 } from 'lucide-react';
 
 function KeepAliveTab({ active, children }: { active: boolean, children: React.ReactNode }) {
@@ -49,6 +50,7 @@ function MainApp() {
 
       {/* Main Content Area */}
       <main className="flex-1 relative h-full flex flex-col min-w-0">
+        <PWAInstallBanner className="md:hidden shrink-0" />
         
         {/* Active Tabs (only show if no screen is pushed, OR if on desktop where we might want split views later. 
             For now, follow mobile paradigm but responsive) */}

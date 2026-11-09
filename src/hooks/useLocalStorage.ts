@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 // Simple deep merge to handle missing keys and schema changes
 function mergeDefaults<T>(stored: any, defaults: T): T {
   if (stored === null || stored === undefined) return defaults;
+  if (defaults === undefined) return stored as unknown as T;
   if (Array.isArray(defaults)) {
     // If the default is an array, we expect the stored value to be an array.
     // We don't merge arrays element-by-element; we return the stored array, 
@@ -34,7 +35,7 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
       const item = window.localStorage.getItem(key);
-      if (item) {
+      if (item !== null && item !== 'undefined') {
         try {
           const parsed = JSON.parse(item);
           // Handle schema migration / missing fields by merging with defaults
@@ -42,7 +43,11 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
         } catch (parseError) {
           console.error(`Corrupted data found for ${key}, falling back to defaults`, parseError);
           // Auto-heal corrupted data
-          window.localStorage.setItem(key, JSON.stringify(initialValue));
+          if (initialValue === undefined) {
+            window.localStorage.removeItem(key);
+          } else {
+            window.localStorage.setItem(key, JSON.stringify(initialValue));
+          }
           return initialValue;
         }
       }
@@ -59,7 +64,15 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
         const valueToStore = value instanceof Function ? value(prev) : value;
         // Check for partial writes / quota exceeded
         try {
+          if (valueToStore === undefined) {
+            window.localStorage.removeItem(key);
+            return undefined as unknown as T;
+          }
           const stringified = JSON.stringify(valueToStore);
+          if (stringified === undefined) {
+            window.localStorage.removeItem(key);
+            return undefined as unknown as T;
+          }
           window.localStorage.setItem(key, stringified);
           
           // Verify it was written successfully
@@ -93,4 +106,3 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
 
   return [storedValue, setValue] as const;
 }
-

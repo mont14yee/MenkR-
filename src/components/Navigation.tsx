@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, FolderKanban, Wrench, Users, Grid, X, 
-  CheckSquare, Calendar, DollarSign, Clock, Settings, LayoutTemplate, FolderHeart, ChevronRight 
+  CheckSquare, Calendar, DollarSign, Clock, Settings, LayoutTemplate, FolderHeart, ChevronRight, Smartphone 
 } from 'lucide-react';
 import { TabState, PushedScreenState } from '../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export function Navigation({
   activeTab,
@@ -90,6 +91,20 @@ export function Navigation({
               >
                 <X size={16} />
               </button>
+            </div>
+
+            {/* In-app install banner in More Sheet */}
+            <div className="mb-3 p-3 rounded-2xl bg-surface-neutral/60 border border-bd-subtle flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-canvas border border-bd-subtle flex items-center justify-center text-accent-primary shrink-0">
+                  <Smartphone size={16} />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-tx-primary">Add to Home Screen</div>
+                  <div className="text-[11px] text-tx-muted">Launch full screen & offline</div>
+                </div>
+              </div>
+              <PWAInstallButton variant="primary" size="sm" />
             </div>
 
             <div className="grid grid-cols-1 gap-2 pb-6">

@@ -60,4 +60,23 @@ describe('useLocalStorage', () => {
     
     expect(result.current[0]).toEqual({ a: 1, unknownKey: 'value' });
   });
+
+  it('safely handles undefined values and resets without Partial write detected error', () => {
+    const { result } = renderHook(() => useLocalStorage<number | undefined>('menkir-timer-rate', undefined));
+    expect(result.current[0]).toBeUndefined();
+
+    // Set a defined rate
+    act(() => {
+      result.current[1](75);
+    });
+    expect(result.current[0]).toBe(75);
+    expect(localStorage.getItem('menkir-timer-rate')).toBe('75');
+
+    // Reset back to undefined (reproducing resetTimer scenario)
+    act(() => {
+      result.current[1](undefined);
+    });
+    expect(result.current[0]).toBeUndefined();
+    expect(localStorage.getItem('menkir-timer-rate')).toBeNull();
+  });
 });

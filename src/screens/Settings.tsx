@@ -4,9 +4,10 @@ import {
   X, MoreVertical, Sparkles, User, Signal, Palette, Landmark, Settings2, 
   ChevronLeft, Trash2, Download, Upload, AlertCircle, Database, ShieldCheck, 
   RefreshCw, Building2, LogIn, LogOut, CheckCircle2, Users2, Mail, UserPlus, 
-  Shield, KeyRound, ChevronRight, Copy, Check, Activity, Bell 
+  Shield, KeyRound, ChevronRight, Copy, Check, Activity, Bell, Smartphone 
 } from 'lucide-react';
 import { Header, ListRow, CircularProgress } from '../components/Shared';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 import { usePreferences } from '../context/PreferencesContext';
 import { useProfile } from '../context/ProfileContext';
 import { useAuth, OrgRole, OrgMember, OrgInvitation } from '../context/AuthContext';
@@ -691,6 +692,20 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
               onClick={s.onClick}
             />
           ))}
+        </div>
+
+        {/* PWA & Mobile Installation */}
+        <div className="p-4 bg-surface-neutral/50 rounded-2xl border border-bd-subtle flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-canvas border border-bd-subtle flex items-center justify-center text-accent-primary shrink-0">
+              <Smartphone size={20} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[15px] font-semibold text-tx-primary truncate">Install MenkiR</div>
+              <div className="text-[12px] text-tx-muted truncate">Add to Home Screen for fast offline app access</div>
+            </div>
+          </div>
+          <PWAInstallButton variant="primary" size="sm" />
         </div>
 
         {/* Enterprise Database & Organization */}

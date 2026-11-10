@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- MenkR- Full-bleed Maskable Vector App Icon for Android Adaptive Icons -->
+  <rect width="512" height="512" fill="#0A0E17"/>
+
+  <!-- Centered M Monogram scaled within 80% safe zone (safe radius R = 205px) -->
+  <g id="menkir-folded-m-maskable" transform="translate(256, 256) scale(0.86) translate(-256, -256)">
+    <!-- 1. Orange-Red Upper-Left Segment: Ascending Left Leg and Downward Inner Fold -->
+    <polygon points="128,364 176,148 224,148 176,364" fill="#FF4625"/>
+    <polygon points="176,148 224,148 280,272 232,272" fill="#DE370F"/>
+
+    <!-- 2. Clean White Central and Upper-Right Segment: Central Rising Diagonal to Right Peak -->
+    <polygon points="232,272 280,272 336,148 288,148" fill="#FFFFFF"/>
+
+    <!-- 3. Amber-Orange Lower-Right Segment: Right Peak Fold Facet and Descending Right Leg -->
+    <polygon points="288,148 336,148 288,212" fill="#D97706"/>
+    <polygon points="288,212 336,148 384,364 336,364" fill="#F59E0B"/>
+  </g>
+</svg>

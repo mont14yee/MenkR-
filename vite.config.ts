@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.png', 'apple-touch-icon.png', 'icon.svg'],
+        includeAssets: ['favicon.png', 'favicon.svg', 'apple-touch-icon.png', 'icon.svg', 'icon-maskable.svg'],
         manifest: {
           id: '/',
           name: 'MenkiR',
@@ -36,8 +36,14 @@ export default defineConfig(() => {
               purpose: 'any',
             },
             {
-              src: '/icon-512.png',
+              src: '/icon-maskable-512.png',
               sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+            {
+              src: '/icon-maskable-192.png',
+              sizes: '192x192',
               type: 'image/png',
               purpose: 'maskable',
             },
@@ -48,8 +54,7 @@ export default defineConfig(() => {
           navigateFallbackDenylist: [/^\/api/],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

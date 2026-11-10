@@ -4,6 +4,50 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#F1F0EC" />
+    <script>
+      // Ignore WebSocket, Vite HMR, and development ServiceWorker errors
+      window.addEventListener('error', function (e) {
+        if (
+          e.message &&
+          (e.message.includes('WebSocket') ||
+           e.message.includes('ServiceWorker') ||
+           e.message.includes('dev-sw') ||
+           e.message.includes('[vite]') ||
+           e.filename?.includes('@vite/client') ||
+           e.filename?.includes('dev-sw'))
+        ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        if (
+          e.reason &&
+          (String(e.reason).includes('WebSocket') ||
+           String(e.reason).includes('ServiceWorker') ||
+           String(e.reason).includes('dev-sw') ||
+           String(e.reason?.message).includes('WebSocket') ||
+           String(e.reason?.message).includes('ServiceWorker') ||
+           String(e.reason?.message).includes('dev-sw') ||
+           String(e.reason).includes('[vite]'))
+        ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      }, true);
+      // Unregister any stale dev-sw worker in development environment
+      if ('serviceWorker' in navigator && window.location.hostname.includes('ais-dev')) {
+        try {
+          navigator.serviceWorker.getRegistrations().then(function (registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              if (registrations[i].active && registrations[i].active.scriptURL.includes('dev-sw')) {
+                registrations[i].unregister();
+              }
+            }
+          }).catch(function () {});
+        } catch (_) {}
+      }
+    </script>
     <title>MenkiR</title>
     <meta name="description" content="Mobile-first CRM and business manager for freelancers and studios" />
     <meta property="og:title" content="MenkiR" />
@@ -15,8 +59,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="MenkiR" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

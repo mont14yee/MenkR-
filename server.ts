@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
@@ -1273,10 +1274,17 @@ async function startServer() {
     }
   });
 
+  const server = http.createServer(app);
+
   // Vite middleware for development vs Static bundle for production
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: {
+          server,
+        },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1298,7 +1306,7 @@ async function startServer() {
     });
   });
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`[MenkR- Server] Running in ${process.env.NODE_ENV || 'development'} mode on http://0.0.0.0:${PORT}`);
   });
 

@@ -44,9 +44,11 @@ export function PWAInstallBanner({ className = '', forceVisible = false }: PWAIn
         aria-label="Add to Home Screen"
       >
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-accent-primary/10 border border-accent-primary/20 flex items-center justify-center shrink-0 text-accent-primary">
-            <Smartphone size={16} />
-          </div>
+          <img 
+            src="/icon-192.png" 
+            alt="MenkiR Icon" 
+            className="w-8 h-8 rounded-lg shadow-2xs border border-bd-subtle object-cover shrink-0" 
+          />
           <div className="min-w-0">
             <p className="font-semibold text-tx-primary truncate">
               Install MenkiR

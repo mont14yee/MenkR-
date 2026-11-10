@@ -41,9 +41,11 @@ export function Onboarding() {
   return (
     <div className="absolute inset-0 z-50 bg-canvas flex flex-col justify-between overflow-y-auto max-w-[430px] mx-auto animate-in fade-in zoom-in-95 duration-300">
       <div className="px-6 pt-16 pb-8">
-        <div className="w-16 h-16 rounded-3xl bg-accent-primary text-tx-primary flex items-center justify-center mb-6">
-          <Users size={32} />
-        </div>
+        <img 
+          src="/icon-192.png" 
+          alt="MenkiR App Icon" 
+          className="w-16 h-16 rounded-2xl shadow-sm border border-bd-subtle object-cover mb-6" 
+        />
         <h1 className="text-[28px] font-bold text-tx-primary leading-tight mb-3">
           Welcome to MenkiR
         </h1>

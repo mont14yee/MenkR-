@@ -8,8 +8,10 @@ import { useCalendar } from '../context/CalendarContext';
 import { useLibrary } from '../context/LibraryContext';
 import { useTemplates } from '../context/TemplatesContext';
 import { useRevenue } from '../context/RevenueContext';
+import { usePreferences } from '../context/PreferencesContext';
 import { useAIAssistant } from '../context/AIAssistantContext';
 import { useAuth } from '../context/AuthContext';
+import { formatCurrency } from '../utils/currency';
 import { 
   Search, Users, CheckSquare, Calendar as CalendarIcon, 
   FileText, Target, DollarSign, CornerDownLeft, Plus, FolderKanban, Sparkles,
@@ -38,6 +40,7 @@ export function CommandPalette() {
   const { library } = useLibrary();
   const { templates } = useTemplates();
   const { revenues } = useRevenue();
+  const { preferences } = usePreferences();
   const { openAssistant } = useAIAssistant();
   const { organization, idToken, role } = useAuth();
 
@@ -371,7 +374,7 @@ export function CommandPalette() {
           items.push({
             id: `revenue-${r.id}`,
             type: 'Finance',
-            title: `${r.type === 'income' ? '+' : '-'}$${Number(r.amount).toFixed(2)} (${r.category})`,
+            title: `${r.type === 'income' ? '+' : '-'}${formatCurrency(r.amount, preferences.currency)} (${r.category})`,
             subtitle: `Finance • ${r.clientOrProject || 'General'} • ${r.status}`,
             metadata: { status: r.status, amount: r.amount },
             icon: <DollarSign size={15} className="text-emerald-600" />,
@@ -392,6 +395,7 @@ export function CommandPalette() {
     templates, 
     revenues, 
     canViewFinance, 
+    preferences.currency,
     push, 
     goToTab, 
     goToClient, 

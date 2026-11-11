@@ -180,8 +180,10 @@ export interface MessageItem {
   pinned?: boolean;
 }
 
+export type SupportedCurrency = 'USD' | 'EUR' | 'GBP' | 'ETB' | string;
+
 export interface UserPreferences {
-  currency: string;
+  currency: SupportedCurrency;
   firstDayOfWeek: 'sun' | 'mon';
   defaultReminderMinutes: number;
   roundingIncrementMinutes: number;

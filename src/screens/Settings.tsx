@@ -76,6 +76,7 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
                 <option value="USD">USD ($)</option>
                 <option value="EUR">EUR (€)</option>
                 <option value="GBP">GBP (£)</option>
+                <option value="ETB">Ethiopian Birr (ETB)</option>
               </select>
             </div>
             
@@ -1057,6 +1058,7 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
                 <option value="USD">USD ($)</option>
                 <option value="EUR">EUR (€)</option>
                 <option value="GBP">GBP (£)</option>
+                <option value="ETB">Ethiopian Birr (ETB)</option>
               </select>
               <button
                 onClick={handleCreateNewOrg}

@@ -24,6 +24,7 @@ import { logAuditEvent, fetchAuditEvents } from '../services/activityService';
 import { Client, ClientStatus, MessageChannel, ProjectItem, TaskItem, EventItem, LibraryItem } from '../types';
 import { formatCurrency, formatCurrencyCompact, getCurrencySymbol } from '../utils/currency';
 import { generateId } from '../utils/id';
+import { validateRequired, validateEmail, validatePositiveNumber, validateUrl } from '../utils/validation';
 
 const STATUS_COLORS: Record<ClientStatus, string> = {
   lead: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
@@ -54,6 +55,7 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   const { push, goToTab, navigationOptions } = useNavigation();
   const { role, idToken, organization } = useAuth();
   const { showToast } = useToast();
+  const isReadOnly = role === 'viewer';
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(initialClientId || null);
   const [filter, setFilter] = useState<'all' | ClientStatus>('all');
@@ -67,6 +69,7 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Forms
   const initialFormState = {
@@ -184,23 +187,57 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   }), [clients]);
 
   const handleSaveClient = (addAnother: boolean = false) => {
-    if (!form.name.trim()) return;
-    if (editingClientId) {
-      updateClient(editingClientId, form);
-      logAuditEvent(idToken, organization?.id || null, 'client.updated', 'client', editingClientId, { name: form.name });
-    } else {
-      const newId = addClient({ ...form, avatarSeed: generateId(), createdAt: new Date().toISOString() });
-      logAuditEvent(idToken, organization?.id || null, 'client.created', 'client', newId, { name: form.name });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    if (addAnother) {
-      setForm(initialFormState);
-      setEditingClientId(null);
-    } else {
-      setIsSheetOpen(false);
+    const nameValidation = validateRequired(form.name, 'Client name');
+    if (!nameValidation.isValid) {
+      const msg = nameValidation.error || 'Client name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const emailValidation = validateEmail(form.email, false);
+    if (!emailValidation.isValid) {
+      const msg = emailValidation.error || 'Please enter a valid email address.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    setIsSubmitting(true);
+    try {
+      if (editingClientId) {
+        updateClient(editingClientId, { ...form, name: form.name.trim() });
+        logAuditEvent(idToken, organization?.id || null, 'client.updated', 'client', editingClientId, { name: form.name.trim() });
+        showToast({ message: 'Client updated successfully.' });
+      } else {
+        const newId = addClient({ ...form, name: form.name.trim(), avatarSeed: generateId(), createdAt: new Date().toISOString() });
+        logAuditEvent(idToken, organization?.id || null, 'client.created', 'client', newId, { name: form.name.trim() });
+        showToast({ message: 'Client created successfully.' });
+      }
+      if (addAnother) {
+        setForm(initialFormState);
+        setEditingClientId(null);
+      } else {
+        setIsSheetOpen(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to save client.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const confirmArchive = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      setIsArchiveOpen(false);
+      return;
+    }
     if (selectedClientId) {
       updateClient(selectedClientId, { status: 'past', isArchived: true });
       logAuditEvent(idToken, organization?.id || null, 'client.archived', 'client', selectedClientId, { name: selectedClient?.name });
@@ -210,6 +247,11 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   };
 
   const confirmDelete = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      setIsDeleteOpen(false);
+      return;
+    }
     if (selectedClientId) {
       const projCount = clientData?.projects.length || 0;
       const taskCount = clientData?.tasks.length || 0;
@@ -226,6 +268,10 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   };
 
   const handleToggleTask = (t: TaskItem) => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     completeTask(t.id);
     const newStatus = t.status === 'done' ? 'active' : 'done';
     logAuditEvent(idToken, organization?.id || null, `task.${newStatus}`, 'client', selectedClientId || undefined, {
@@ -236,9 +282,18 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
   };
 
   const handleSendMsg = () => {
-    if (!msgBody.trim() || !selectedClientId) return;
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
+    if (!selectedClientId) return;
+    if (!msgBody.trim()) {
+      showToast({ message: 'Please enter a note or message.' });
+      return;
+    }
     addMessage({ clientId: selectedClientId, body: msgBody.trim(), channel: msgChannel });
     setMsgBody('');
+    showToast({ message: 'Activity note recorded' });
   };
 
   const addTag = () => {
@@ -253,72 +308,201 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
 
   // Creation Handlers
   const handleCreateProject = () => {
-    if (!projectForm.name || !selectedClientId) return;
-    const newProjId = addProject({
-      name: projectForm.name,
-      priority: projectForm.priority,
-      tone: projectForm.tone,
-      completionPct: 0,
-      clientId: selectedClientId,
-      status: 'active',
-      dueDate: projectForm.dueDate || undefined,
-      budget: projectForm.budget ? Number(projectForm.budget) : undefined,
-    });
-    logAuditEvent(idToken, organization?.id || null, 'project.created', 'client', selectedClientId, {
-      projectId: newProjId,
-      projectName: projectForm.name,
-    });
-    showToast({ message: 'Project created for client' });
-    setActiveActionSheet(null);
-    setProjectForm({ name: '', priority: 'high', tone: 'neutral', dueDate: '', budget: '' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedClientId) {
+      const msg = 'Please select a client.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const nameValidation = validateRequired(projectForm.name, 'Project name');
+    if (!nameValidation.isValid) {
+      const msg = nameValidation.error || 'Project name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (projectForm.budget && projectForm.budget.trim()) {
+      const budgetValidation = validatePositiveNumber(projectForm.budget, 'Budget', true);
+      if (!budgetValidation.isValid) {
+        const msg = budgetValidation.error || 'Budget must be a valid number.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      const newProjId = addProject({
+        name: projectForm.name.trim(),
+        priority: projectForm.priority,
+        tone: projectForm.tone,
+        completionPct: 0,
+        clientId: selectedClientId,
+        status: 'active',
+        dueDate: projectForm.dueDate || undefined,
+        budget: projectForm.budget ? Number(projectForm.budget) : undefined,
+      });
+      logAuditEvent(idToken, organization?.id || null, 'project.created', 'client', selectedClientId, {
+        projectId: newProjId,
+        projectName: projectForm.name.trim(),
+      });
+      showToast({ message: 'Project created for client' });
+      setActiveActionSheet(null);
+      setProjectForm({ name: '', priority: 'high', tone: 'neutral', dueDate: '', budget: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to create project.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateTask = () => {
-    if (!taskForm.title || !taskForm.categoryId || !selectedClientId) return;
-    const newTaskId = addTask({
-      title: taskForm.title,
-      priority: taskForm.priority,
-      categoryId: taskForm.categoryId,
-      status: 'active',
-      clientId: selectedClientId,
-      projectId: taskForm.projectId || undefined,
-      dueDate: taskForm.dueDate || undefined,
-      date: taskForm.dueDate || new Date().toISOString(),
-    });
-    logAuditEvent(idToken, organization?.id || null, 'task.created', 'client', selectedClientId, {
-      taskId: newTaskId,
-      taskTitle: taskForm.title,
-      projectId: taskForm.projectId,
-    });
-    showToast({ message: 'Task added for client' });
-    setActiveActionSheet(null);
-    setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId, projectId: '', dueDate: '' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedClientId) {
+      const msg = 'Please select a client.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const titleValidation = validateRequired(taskForm.title, 'Task title');
+    if (!titleValidation.isValid) {
+      const msg = titleValidation.error || 'Task title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!taskForm.categoryId) {
+      const msg = 'Please select a category for the task.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    setIsSubmitting(true);
+    try {
+      const newTaskId = addTask({
+        title: taskForm.title.trim(),
+        priority: taskForm.priority,
+        categoryId: taskForm.categoryId,
+        status: 'active',
+        clientId: selectedClientId,
+        projectId: taskForm.projectId || undefined,
+        dueDate: taskForm.dueDate || undefined,
+        date: taskForm.dueDate || new Date().toISOString(),
+      });
+      logAuditEvent(idToken, organization?.id || null, 'task.created', 'client', selectedClientId, {
+        taskId: newTaskId,
+        taskTitle: taskForm.title.trim(),
+        projectId: taskForm.projectId,
+      });
+      showToast({ message: 'Task added for client' });
+      setActiveActionSheet(null);
+      setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId, projectId: '', dueDate: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to create task.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateEvent = () => {
-    if (!eventForm.title || !selectedClientId) return;
-    const cat = preferences.categories.find(c => c.scope === 'event');
-    addEvent({
-      ...eventForm,
-      allDay: true,
-      status: 'scheduled',
-      clientId: selectedClientId,
-      categoryId: cat?.id || '',
-      repeat: 'none'
-    });
-    setActiveActionSheet(null);
-    setEventForm({ title: '', date: new Date().toISOString().split('T')[0], type: 'Meeting' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedClientId) {
+      const msg = 'Please select a client.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const titleValidation = validateRequired(eventForm.title, 'Event title');
+    if (!titleValidation.isValid) {
+      const msg = titleValidation.error || 'Event title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    setIsSubmitting(true);
+    try {
+      const cat = preferences.categories.find(c => c.scope === 'event');
+      addEvent({
+        ...eventForm,
+        title: eventForm.title.trim(),
+        allDay: true,
+        status: 'scheduled',
+        clientId: selectedClientId,
+        categoryId: cat?.id || '',
+        repeat: 'none'
+      });
+      showToast({ message: 'Event scheduled for client' });
+      setActiveActionSheet(null);
+      setEventForm({ title: '', date: new Date().toISOString().split('T')[0], type: 'Meeting' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to schedule event.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateLibrary = () => {
-    if (!libForm.name || !selectedClientId) return;
-    addLibraryItem({
-      ...libForm,
-      clientId: selectedClientId,
-      tags: []
-    });
-    setActiveActionSheet(null);
-    setLibForm({ name: '', type: 'link', category: 'Documents', urlOrReference: '' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedClientId) {
+      const msg = 'Please select a client.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const nameValidation = validateRequired(libForm.name, 'Document name');
+    if (!nameValidation.isValid) {
+      const msg = nameValidation.error || 'Document name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (libForm.type === 'link' && libForm.urlOrReference.trim()) {
+      const urlValidation = validateUrl(libForm.urlOrReference, false);
+      if (!urlValidation.isValid) {
+        const msg = urlValidation.error || 'Please enter a valid web URL.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      addLibraryItem({
+        ...libForm,
+        name: libForm.name.trim(),
+        clientId: selectedClientId,
+        tags: []
+      });
+      showToast({ message: 'Document added for client' });
+      setActiveActionSheet(null);
+      setLibForm({ name: '', type: 'link', category: 'Documents', urlOrReference: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to save resource.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -329,7 +513,20 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
             <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-neutral text-tx-primary transition-colors">
               <Search size={20} />
             </button>
-            <button onClick={() => { setForm(initialFormState); setEditingClientId(null); setIsSheetOpen(true); }} className="w-10 h-10 flex items-center justify-center rounded-full bg-tx-primary text-tx-inverse hover:opacity-90 transition-opacity" aria-label="Add client">
+            <button
+              onClick={() => {
+                if (isReadOnly) {
+                  showToast({ message: 'Viewer role has read-only access' });
+                  return;
+                }
+                setForm(initialFormState);
+                setEditingClientId(null);
+                setIsSheetOpen(true);
+              }}
+              disabled={isReadOnly}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-tx-primary text-tx-inverse hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Add client"
+            >
               <Plus size={22} />
             </button>
           </div>
@@ -563,19 +760,35 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
                   <div>
                     <h3 className="text-xs font-semibold text-tx-muted uppercase tracking-wider mb-2.5">Quick Actions</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                      <button onClick={() => setActiveActionSheet('project')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('project')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><Briefcase size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">New Project</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('task')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('task')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CheckSquare size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">New Task</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('event')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('event')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CalendarIcon size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">Schedule</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('library')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('library')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex items-center gap-2.5 transition-all group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><FileText size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">Add File</span>
                       </button>
@@ -598,7 +811,7 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
                             )
                           })}
                         </div>
-                        <button onClick={handleSendMsg} disabled={!msgBody.trim()} className="w-8 h-8 rounded-full bg-tx-primary text-tx-inverse flex items-center justify-center disabled:opacity-50">
+                        <button onClick={handleSendMsg} disabled={isReadOnly || !msgBody.trim()} className="w-8 h-8 rounded-full bg-tx-primary text-tx-inverse flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
                           <Send size={14} className="ml-0.5" />
                         </button>
                       </div>
@@ -803,7 +1016,11 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
 
               {activeTab === 'schedule' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('event')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button
+                    onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('event')}
+                    disabled={isReadOnly}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     <Plus size={18} /> Schedule Event
                   </button>
                   {clientData.events.length === 0 ? (
@@ -875,7 +1092,11 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
               )})()}
               {activeTab === 'library' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('library')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button
+                    onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('library')}
+                    disabled={isReadOnly}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     <Plus size={18} /> Add Document
                   </button>
                   {clientData.library.length === 0 ? (
@@ -905,7 +1126,16 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
       </div>
 
       {/* Primary Sheet: Edit/Create Client */}
-      <BottomSheet isOpen={isSheetOpen} onClose={() => setIsSheetOpen(false)} title={editingClientId ? "Edit Client" : "New Client"} onSave={() => handleSaveClient(false)} saveLabel="Save">
+      <BottomSheet 
+        isOpen={isSheetOpen} 
+        onClose={() => setIsSheetOpen(false)} 
+        title={editingClientId ? "Edit Client" : "New Client"} 
+        onSave={() => handleSaveClient(false)} 
+        saveLabel={editingClientId ? "Save Changes" : "Create Client"}
+        savingLabel={editingClientId ? "Saving..." : "Creating..."}
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !form.name.trim() || (!!form.email.trim() && !validateEmail(form.email, false).isValid)}
+      >
         <BottomSheetField label="Name *"><input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Jane Doe" /></BottomSheetField>
         <BottomSheetField label="Company"><input type="text" value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} placeholder="Acme Corp" /></BottomSheetField>
         <div className="grid grid-cols-2 gap-4">
@@ -935,7 +1165,16 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
       </BottomSheet>
 
       {/* Action Sheets */}
-      <BottomSheet isOpen={activeActionSheet === 'project'} onClose={() => setActiveActionSheet(null)} title="New Project" onSave={handleCreateProject} saveLabel="Create Project">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'project'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="New Project" 
+        onSave={handleCreateProject} 
+        saveLabel="Create Project"
+        savingLabel="Creating..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !projectForm.name.trim() || (!!projectForm.budget.trim() && !validatePositiveNumber(projectForm.budget, 'Budget', true).isValid)}
+      >
         <BottomSheetField label="Project Name *"><input type="text" value={projectForm.name} onChange={e => setProjectForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Q4 Website Redesign" /></BottomSheetField>
         <div className="grid grid-cols-2 gap-3">
           <BottomSheetField label="Due Date">
@@ -954,7 +1193,16 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
         </BottomSheetField>
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'task'} onClose={() => setActiveActionSheet(null)} title="New Task" onSave={handleCreateTask} saveLabel="Add Task">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'task'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="New Task" 
+        onSave={handleCreateTask} 
+        saveLabel="Create Task"
+        savingLabel="Creating..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !taskForm.title.trim() || !taskForm.categoryId}
+      >
         <BottomSheetField label="Task Title *"><input type="text" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Send proposal" /></BottomSheetField>
         {clientData && clientData.projects.length > 0 && (
           <BottomSheetField label="Link to Project (Optional)">
@@ -989,12 +1237,30 @@ export function Clients({ initialClientId, initialOpenCreate }: { initialClientI
         </BottomSheetField>
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'event'} onClose={() => setActiveActionSheet(null)} title="Schedule Event" onSave={handleCreateEvent} saveLabel="Schedule">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'event'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="Schedule Event" 
+        onSave={handleCreateEvent} 
+        saveLabel="Save Event"
+        savingLabel="Saving..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !eventForm.title.trim() || !eventForm.date}
+      >
         <BottomSheetField label="Title *"><input type="text" value={eventForm.title} onChange={e => setEventForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Discovery Call" /></BottomSheetField>
         <BottomSheetField label="Date"><input type="date" value={eventForm.date} onChange={e => setEventForm(f => ({ ...f, date: e.target.value }))} /></BottomSheetField>
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'library'} onClose={() => setActiveActionSheet(null)} title="Add Document" onSave={handleCreateLibrary} saveLabel="Save Document">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'library'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="Add Document" 
+        onSave={handleCreateLibrary} 
+        saveLabel="Save Resource"
+        savingLabel="Saving..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !libForm.name.trim() || (libForm.type === 'link' && !!libForm.urlOrReference.trim() && !validateUrl(libForm.urlOrReference, false).isValid)}
+      >
         <BottomSheetField label="Name *"><input type="text" value={libForm.name} onChange={e => setLibForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. NDA" /></BottomSheetField>
         <BottomSheetField label="Link / URL"><input type="url" value={libForm.urlOrReference} onChange={e => setLibForm(f => ({ ...f, urlOrReference: e.target.value }))} placeholder="https://..." /></BottomSheetField>
       </BottomSheet>

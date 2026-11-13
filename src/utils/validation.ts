@@ -105,8 +105,26 @@ export function validateUrl(url: string | undefined | null, isRequired = false):
     return { isValid: true, value: '' };
   }
 
+  if (/\s/.test(trimmed)) {
+    return { isValid: false, error: 'Please enter a valid web URL.' };
+  }
+
+  const hasExplicitScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+  if (hasExplicitScheme && !/^https?:\/\//i.test(trimmed)) {
+    return { isValid: false, error: 'URL must start with http:// or https://.' };
+  }
+
   try {
-    const parsed = new URL(trimmed.startsWith('http://') || trimmed.startsWith('https://') ? trimmed : `https://${trimmed}`);
+    const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const parsed = new URL(candidate);
+    const hostname = parsed.hostname;
+    const isLocalhost = hostname === 'localhost';
+    const hasValidDomain = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(hostname) && !hostname.startsWith('.') && !hostname.endsWith('.');
+    const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+
+    if (!hostname || (!isLocalhost && !hasValidDomain && !isIpv4)) {
+      return { isValid: false, error: 'Please enter a valid web URL.' };
+    }
     return { isValid: true, value: parsed.href };
   } catch {
     return { isValid: false, error: 'Please enter a valid web URL.' };

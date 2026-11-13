@@ -32,7 +32,7 @@ describe('Library Workflow', () => {
     await user.type(contentInput, 'This is a test note for my library.');
 
     // Save
-    await user.click(screen.getByText('Save'));
+    await user.click(screen.getByRole('button', { name: /^save resource$/i }));
 
     // Verify it appears in the list
     await waitFor(() => {

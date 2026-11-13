@@ -52,6 +52,8 @@ export function Sidebar({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
+  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+  const [createOrgError, setCreateOrgError] = useState<string | null>(null);
   const orgDropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -146,13 +148,31 @@ export function Sidebar({
 
   const handleCreateOrgSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrgName.trim()) return;
-    const res = await createOrg(newOrgName.trim());
-    if (res) {
-      setNewOrgName('');
-      setIsCreateOrgOpen(false);
-      setIsOrgDropdownOpen(false);
-      showToast({ message: `Created workspace "${res.name}"` });
+    if (isCreatingOrg) return;
+    setCreateOrgError(null);
+    if (!newOrgName.trim()) {
+      const msg = 'Workspace name is required.';
+      setCreateOrgError(msg);
+      showToast({ message: msg });
+      return;
+    }
+    setIsCreatingOrg(true);
+    try {
+      const res = await createOrg(newOrgName.trim());
+      if (res) {
+        setNewOrgName('');
+        setIsCreateOrgOpen(false);
+        setIsOrgDropdownOpen(false);
+        showToast({ message: `Created workspace "${res.name}"` });
+      } else {
+        setCreateOrgError('Unable to create workspace. Please try again.');
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to create workspace. Please try again.';
+      setCreateOrgError(msg);
+      showToast({ message: msg });
+    } finally {
+      setIsCreatingOrg(false);
     }
   };
 
@@ -479,6 +499,11 @@ export function Sidebar({
             <h3 className="text-base font-bold text-tx-primary mb-1">Create New Workspace</h3>
             <p className="text-xs text-tx-muted mb-4">Set up an isolated workspace for your team or organization.</p>
             <form onSubmit={handleCreateOrgSubmit} className="space-y-4">
+              {createOrgError && (
+                <div role="alert" className="px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 text-xs font-medium">
+                  {createOrgError}
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-tx-primary block mb-1">Workspace Name</label>
                 <input
@@ -487,23 +512,33 @@ export function Sidebar({
                   required
                   placeholder="Acme Engineering"
                   value={newOrgName}
-                  onChange={e => setNewOrgName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-surface-neutral border border-bd-subtle text-sm text-tx-primary focus:outline-none focus:ring-1 focus:ring-tx-primary"
+                  onChange={e => {
+                    setNewOrgName(e.target.value);
+                    if (createOrgError) setCreateOrgError(null);
+                  }}
+                  disabled={isCreatingOrg}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-neutral border border-bd-subtle text-sm text-tx-primary focus:outline-none focus:ring-1 focus:ring-tx-primary disabled:opacity-60"
                 />
               </div>
               <div className="flex gap-2 justify-end pt-1">
                 <button
                   type="button"
-                  onClick={() => setIsCreateOrgOpen(false)}
-                  className="px-3 py-2 rounded-xl text-xs font-medium text-tx-muted hover:text-tx-primary"
+                  disabled={isCreatingOrg}
+                  onClick={() => {
+                    setIsCreateOrgOpen(false);
+                    setCreateOrgError(null);
+                  }}
+                  className="px-3 py-2 rounded-xl text-xs font-medium text-tx-muted hover:text-tx-primary disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-tx-primary text-canvas text-xs font-semibold hover:opacity-90"
+                  disabled={!newOrgName.trim() || isCreatingOrg}
+                  aria-busy={isCreatingOrg || undefined}
+                  className="px-4 py-2 rounded-xl bg-tx-primary text-canvas text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Create
+                  {isCreatingOrg ? 'Creating...' : 'Create Workspace'}
                 </button>
               </div>
             </form>

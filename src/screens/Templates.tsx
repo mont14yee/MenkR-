@@ -7,15 +7,21 @@ import { LayoutTemplate, Plus, ChevronLeft, MoreVertical, Play, Copy, Archive, T
 import { TemplateItem } from '../types';
 import { TemplateBuilder } from './TemplateBuilder';
 import { TemplateInstantiator } from './TemplateInstantiator';
-import { BottomSheet, BottomSheetField } from '../components/BottomSheet';
+import { BottomSheet, BottomSheetField, SaveActionButton } from '../components/BottomSheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { generateAIContent } from '../lib/ai';
+import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 export function Templates({ onDismiss }: { onDismiss: () => void }) {
   const { templates, addTemplate, updateTemplate, deleteTemplate } = useTemplates();
   const { push, goToTab } = useNavigation();
+  const { showToast } = useToast();
+  const { role } = useAuth();
+  const isReadOnly = role === 'viewer';
 
   const [builderTemplate, setBuilderTemplate] = useState<TemplateItem | null>(null);
+  const [builderDraft, setBuilderDraft] = useState<Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'> | null>(null);
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
 
   const [instantiatorTemplate, setInstantiatorTemplate] = useState<TemplateItem | null>(null);
@@ -23,27 +29,56 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
   const [actionMenuTemplate, setActionMenuTemplate] = useState<TemplateItem | null>(null);
   const [isDeleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
-  // AI Generator state
+  // AI Generator state (draft requires explicit user approval before saving)
   const [isAIGeneratorOpen, setIsAIGeneratorOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [generatedDraft, setGeneratedDraft] = useState<Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'> | null>(null);
 
-  const handleOpenBuilder = (t?: TemplateItem) => {
+  const handleOpenBuilder = (t?: TemplateItem, draft?: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     setBuilderTemplate(t || null);
+    setBuilderDraft(draft || null);
     setIsBuilderOpen(true);
   };
 
   const handleSaveBuilder = (form: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (builderTemplate) {
-      updateTemplate(builderTemplate.id, form);
-    } else {
-      addTemplate(form);
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    setIsBuilderOpen(false);
+    if (!form.name.trim()) {
+      const msg = 'Template name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    try {
+      if (builderTemplate) {
+        updateTemplate(builderTemplate.id, form);
+        showToast({ message: 'Template updated successfully.' });
+      } else {
+        addTemplate(form);
+        showToast({ message: 'Template created successfully.' });
+      }
+      setBuilderDraft(null);
+      setIsBuilderOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save template. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    }
   };
 
   const handleDuplicate = (t: TemplateItem) => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     const { id, createdAt, updatedAt, ...rest } = t;
     addTemplate({
       ...rest,
@@ -53,11 +88,19 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleArchive = (t: TemplateItem) => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     updateTemplate(t.id, { isArchived: !t.isArchived });
     setActionMenuTemplate(null);
   };
 
   const handleDelete = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     if (actionMenuTemplate) {
       deleteTemplate(actionMenuTemplate.id);
       setDeleteConfirmOpen(false);
@@ -66,7 +109,13 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleGenerateTemplate = async () => {
-    if (!aiPrompt.trim()) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      setAiError(msg);
+      return;
+    }
+    if (!aiPrompt.trim() || isGenerating) return;
     
     setIsGenerating(true);
     setAiError(null);
@@ -108,9 +157,7 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
       setAiError(response.error);
     } else if (response.data) {
       const data = response.data;
-      
-      // Map AI data to our TemplateItem format
-      addTemplate({
+      setGeneratedDraft({
         name: data.name || 'AI Generated Template',
         description: data.description || '',
         type: data.type === 'project' || data.type === 'checklist' || data.type === 'campaign' || data.type === 'event' ? data.type : 'project',
@@ -130,8 +177,33 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
         checklists: [],
         library: []
       });
-      setIsAIGeneratorOpen(false);
+    }
+  };
+
+  const handleSaveGeneratedDraft = () => {
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!generatedDraft || !generatedDraft.name.trim()) {
+      const msg = 'Template name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    try {
+      addTemplate({
+        ...generatedDraft,
+        name: generatedDraft.name.trim(),
+      });
+      showToast({ message: `Saved generated template "${generatedDraft.name.trim()}"` });
+      setGeneratedDraft(null);
       setAiPrompt('');
+      setIsAIGeneratorOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save generated template. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
     }
   };
 
@@ -146,10 +218,20 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
         } 
         rightIcon={
           <div className="flex items-center gap-2">
-            <IconButton variant="outline" onClick={() => setIsAIGeneratorOpen(true)} className="text-blue-500 border-blue-500/20 hover:bg-blue-500/10">
+            <IconButton
+              variant="outline"
+              disabled={isReadOnly}
+              onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setIsAIGeneratorOpen(true)}
+              className="text-blue-500 border-blue-500/20 hover:bg-blue-500/10 disabled:opacity-40"
+            >
               <Sparkles size={20} />
             </IconButton>
-            <IconButton variant="primary" onClick={() => handleOpenBuilder()}>
+            <IconButton
+              variant="primary"
+              disabled={isReadOnly}
+              onClick={() => handleOpenBuilder()}
+              className="disabled:opacity-40"
+            >
               <Plus size={20} />
             </IconButton>
           </div>
@@ -207,8 +289,12 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
       {isBuilderOpen && (
         <TemplateBuilder 
           initialTemplate={builderTemplate || undefined} 
+          initialDraft={builderDraft || undefined}
           onSave={handleSaveBuilder} 
-          onDismiss={() => setIsBuilderOpen(false)} 
+          onDismiss={() => {
+            setBuilderDraft(null);
+            setIsBuilderOpen(false);
+          }} 
         />
       )}
 
@@ -290,47 +376,120 @@ export function Templates({ onDismiss }: { onDismiss: () => void }) {
           if (!isGenerating) {
             setIsAIGeneratorOpen(false);
             setAiError(null);
+            setGeneratedDraft(null);
           }
         }}
-        title="Generate AI Template"
-      >
-        <div className="p-4 flex flex-col gap-4">
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 flex gap-3">
-            <Sparkles className="text-blue-500 shrink-0 mt-0.5" size={20} />
-            <p className="text-[14px] text-blue-600 leading-relaxed">
-              Describe a workflow or project type, and the AI will generate a complete template with structured, sequenced tasks.
-            </p>
-          </div>
-
-          <BottomSheetField label="What kind of template do you need?">
-            <textarea
-              className="w-full bg-surface-neutral/50 border border-bd-subtle rounded-xl p-3 text-[15px] text-tx-primary focus:border-blue-500 focus:outline-none transition-colors min-h-[120px] resize-none"
-              placeholder="e.g., A comprehensive onboarding workflow for a new freelance design client..."
-              value={aiPrompt}
-              onChange={e => {
-                setAiPrompt(e.target.value);
-                if (aiError) setAiError(null);
-              }}
-              disabled={isGenerating}
-            />
-          </BottomSheetField>
-
-          {aiError && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-between gap-2">
-              <p className="text-red-500 text-[13px] leading-tight">{aiError}</p>
-              <Button size="sm" variant="outline" className="border-red-500/30 text-red-600 hover:bg-red-500/10 shrink-0" onClick={handleGenerateTemplate}>
-                Retry
+        title={generatedDraft ? 'Review Generated Template' : 'Generate AI Template'}
+        onSave={generatedDraft ? handleSaveGeneratedDraft : undefined}
+        saveLabel="Approve & Save Template"
+        savingLabel="Saving..."
+        saveDisabled={isReadOnly || !generatedDraft?.name.trim()}
+        secondaryAction={
+          generatedDraft ? (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setGeneratedDraft(null)}
+              >
+                Regenerate
+              </Button>
+              <Button
+                variant="secondary"
+                className="flex-1"
+                disabled={isReadOnly}
+                onClick={() => {
+                  const draft = generatedDraft;
+                  setGeneratedDraft(null);
+                  setAiPrompt('');
+                  setIsAIGeneratorOpen(false);
+                  handleOpenBuilder(undefined, draft);
+                }}
+              >
+                Customize in Builder
               </Button>
             </div>
-          )}
+          ) : undefined
+        }
+      >
+        {!generatedDraft ? (
+          <div className="p-1 flex flex-col gap-4">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 flex gap-3">
+              <Sparkles className="text-blue-500 shrink-0 mt-0.5" size={20} />
+              <p className="text-[14px] text-blue-600 leading-relaxed">
+                Describe a workflow or project type, and the AI will draft a structured template for your review before saving.
+              </p>
+            </div>
 
-          <div className="flex gap-3 pt-2">
-            <Button variant="outline" className="flex-1" onClick={() => setIsAIGeneratorOpen(false)} disabled={isGenerating}>Cancel</Button>
-            <Button className="flex-1" onClick={handleGenerateTemplate} disabled={!aiPrompt.trim() || isGenerating}>
-              {isGenerating ? <Loader2 size={18} className="animate-spin" /> : 'Generate Template'}
-            </Button>
+            <BottomSheetField label="What kind of template do you need?">
+              <textarea
+                className="w-full bg-surface-neutral/50 border border-bd-subtle rounded-xl p-3 text-[15px] text-tx-primary focus:border-blue-500 focus:outline-none transition-colors min-h-[120px] resize-none"
+                placeholder="e.g., A comprehensive onboarding workflow for a new freelance design client..."
+                value={aiPrompt}
+                onChange={e => {
+                  setAiPrompt(e.target.value);
+                  if (aiError) setAiError(null);
+                }}
+                disabled={isGenerating}
+              />
+            </BottomSheetField>
+
+            {aiError && (
+              <div role="alert" className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-between gap-2">
+                <p className="text-red-500 text-[13px] leading-tight">{aiError}</p>
+                <Button size="sm" variant="outline" className="border-red-500/30 text-red-600 hover:bg-red-500/10 shrink-0" onClick={handleGenerateTemplate}>
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setIsAIGeneratorOpen(false)} disabled={isGenerating}>Cancel</Button>
+              <Button className="flex-1" onClick={handleGenerateTemplate} disabled={!aiPrompt.trim() || isGenerating}>
+                {isGenerating ? <Loader2 size={18} className="animate-spin" /> : 'Generate Template'}
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 leading-relaxed">
+              Review and approve this AI-drafted template before adding it to your workspace library.
+            </div>
+
+            <BottomSheetField label="Template Name *">
+              <input
+                type="text"
+                value={generatedDraft.name}
+                onChange={e => setGeneratedDraft({ ...generatedDraft, name: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-surface-neutral border border-bd-subtle text-sm font-semibold text-tx-primary outline-none"
+                placeholder="Template name"
+              />
+            </BottomSheetField>
+
+            <BottomSheetField label="Description">
+              <textarea
+                value={generatedDraft.description || ''}
+                onChange={e => setGeneratedDraft({ ...generatedDraft, description: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-surface-neutral border border-bd-subtle text-xs text-tx-primary outline-none h-20 resize-none"
+              />
+            </BottomSheetField>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-tx-muted">
+                <span>Proposed Tasks ({generatedDraft.tasks.length})</span>
+                <span>{generatedDraft.projectDurationDays || 7} days • {generatedDraft.type}</span>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {generatedDraft.tasks.map((task, idx) => (
+                  <div key={task.id || idx} className="p-2.5 rounded-xl bg-surface-neutral/60 border border-bd-subtle text-xs flex items-center justify-between gap-2">
+                    <span className="font-medium text-tx-primary truncate">{task.title}</span>
+                    <span className="text-[11px] text-tx-muted shrink-0">D+{task.offsetDays} • {task.priority}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </BottomSheet>
     </div>
   );

@@ -159,72 +159,81 @@ export function Tasks({ onDismiss }: TasksProps) {
   };
 
   const handleSave = () => {
-    if (isReadOnly) return;
+    if (isReadOnly) {
+      throw new Error('Viewing in read-only mode. You cannot edit tasks.');
+    }
     if (!form.title.trim()) {
-      showToast({ message: 'Task title is required' });
-      return;
+      const msg = 'Task title is required';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
-    if (editingTask) {
-      updateTask(editingTask.id, {
-        title: form.title,
-        projectId: form.projectId || undefined,
-        clientId: form.clientId || undefined,
-        assigneeId: form.assigneeId || undefined,
-        assigneeName: form.assigneeName || undefined,
-        dueDate: form.dueDate || undefined,
-        date: form.dueDate || undefined,
-        categoryId: form.category,
-        priority: form.priority,
-        notes: form.notes,
-      });
+    try {
+      if (editingTask) {
+        updateTask(editingTask.id, {
+          title: form.title.trim(),
+          projectId: form.projectId || undefined,
+          clientId: form.clientId || undefined,
+          assigneeId: form.assigneeId || undefined,
+          assigneeName: form.assigneeName || undefined,
+          dueDate: form.dueDate || undefined,
+          date: form.dueDate || undefined,
+          categoryId: form.category,
+          priority: form.priority,
+          notes: form.notes,
+        });
 
-      logAuditEvent(idToken, orgId, 'task.updated', 'task', editingTask.id, {
-        title: form.title,
-        projectId: form.projectId,
-        assignee: form.assigneeName,
-        priority: form.priority,
-        dueDate: form.dueDate
-      });
-      showToast({ message: 'Task updated successfully' });
-    } else {
-      const newId = addTask({
-        title: form.title,
-        projectId: form.projectId || undefined,
-        clientId: form.clientId || undefined,
-        assigneeId: form.assigneeId || undefined,
-        assigneeName: form.assigneeName || undefined,
-        dueDate: form.dueDate || undefined,
-        date: form.dueDate || undefined,
-        categoryId: form.category,
-        priority: form.priority,
-        notes: form.notes,
-        status: 'active',
-      });
+        logAuditEvent(idToken, orgId, 'task.updated', 'task', editingTask.id, {
+          title: form.title.trim(),
+          projectId: form.projectId,
+          assignee: form.assigneeName,
+          priority: form.priority,
+          dueDate: form.dueDate
+        });
+        showToast({ message: 'Task updated successfully' });
+      } else {
+        const newId = addTask({
+          title: form.title.trim(),
+          projectId: form.projectId || undefined,
+          clientId: form.clientId || undefined,
+          assigneeId: form.assigneeId || undefined,
+          assigneeName: form.assigneeName || undefined,
+          dueDate: form.dueDate || undefined,
+          date: form.dueDate || undefined,
+          categoryId: form.category,
+          priority: form.priority,
+          notes: form.notes,
+          status: 'active',
+        });
 
-      // If task belongs to a project, recalculate project completion percentage
-      if (form.projectId) {
-        const projTasks = [...tasks.filter(t => t.projectId === form.projectId), { status: 'active' }];
-        const completedCount = projTasks.filter(t => t.status === 'done').length;
-        const newPct = Math.round((completedCount / projTasks.length) * 100);
-        updateProject(form.projectId, { completionPct: newPct });
+        // If task belongs to a project, recalculate project completion percentage
+        if (form.projectId) {
+          const projTasks = [...tasks.filter(t => t.projectId === form.projectId), { status: 'active' }];
+          const completedCount = projTasks.filter(t => t.status === 'done').length;
+          const newPct = Math.round((completedCount / projTasks.length) * 100);
+          updateProject(form.projectId, { completionPct: newPct });
+        }
+
+        logAuditEvent(idToken, orgId, 'task.created', 'task', newId, {
+          title: form.title.trim(),
+          projectId: form.projectId,
+          assignee: form.assigneeName,
+          priority: form.priority,
+          dueDate: form.dueDate
+        });
+
+        showToast({
+          message: 'Task created successfully',
+          actionLabel: 'Add another',
+          onAction: () => handleOpenSheet(),
+        });
       }
-
-      logAuditEvent(idToken, orgId, 'task.created', 'task', newId, {
-        title: form.title,
-        projectId: form.projectId,
-        assignee: form.assigneeName,
-        priority: form.priority,
-        dueDate: form.dueDate
-      });
-
-      showToast({
-        message: 'Task created successfully',
-        actionLabel: 'Add another',
-        onAction: () => handleOpenSheet(),
-      });
+      setSheetOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save task. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
     }
-    setSheetOpen(false);
   };
 
   const handleToggleComplete = (task: TaskItem) => {
@@ -707,6 +716,9 @@ export function Tasks({ onDismiss }: TasksProps) {
         onClose={() => setSheetOpen(false)}
         title={editingTask ? 'Edit Task' : 'New Task'}
         onSave={handleSave}
+        saveLabel={editingTask ? 'Save Changes' : 'Create Task'}
+        savingLabel={editingTask ? 'Saving...' : 'Creating...'}
+        saveDisabled={isReadOnly || !form.title.trim()}
       >
         <BottomSheetField>
           <input

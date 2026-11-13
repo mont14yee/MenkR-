@@ -23,6 +23,7 @@ import { logAuditEvent, fetchAuditEvents } from '../services/activityService';
 import { formatCurrency, formatCurrencyCompact } from '../utils/currency';
 import { ProjectItem, TaskItem } from '../types';
 import { generateAIContent } from '../lib/ai';
+import { validateRequired, validatePositiveNumber, validateUrl } from '../utils/validation';
 
 type TabType = 'overview' | 'tasks' | 'schedule' | 'timeline' | 'files' | 'time' | 'finance' | 'activity';
 
@@ -45,6 +46,7 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
   const { role, user, idToken, organization, fetchMembers } = useAuth();
   const { showToast } = useToast();
   const { openAssistant } = useAIAssistant();
+  const isReadOnly = role === 'viewer';
 
   // Handle nav filter if present
   const filterClientId = navigationOptions?.filterClientId || '';
@@ -82,6 +84,7 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
     assignedMemberIds: [] as string[],
   };
   const [form, setForm] = useState(initialFormState);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Quick Action Sheets
   const [activeActionSheet, setActiveActionSheet] = useState<'task' | 'event' | 'library' | 'revenue' | null>(null);
@@ -231,49 +234,101 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
   }), [projects]);
 
   const handleSaveProject = (addAnother: boolean = false) => {
-    if (!form.name.trim()) return;
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const nameValidation = validateRequired(form.name, 'Project name');
+    if (!nameValidation.isValid) {
+      const msg = nameValidation.error || 'Project name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    if (form.budget && form.budget.trim()) {
+      const budgetValidation = validatePositiveNumber(form.budget, 'Budget', true);
+      if (!budgetValidation.isValid) {
+        const msg = budgetValidation.error || 'Budget must be a valid number.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+    }
+
+    if (form.hourlyRate && form.hourlyRate.trim()) {
+      const rateValidation = validatePositiveNumber(form.hourlyRate, 'Hourly rate', true);
+      if (!rateValidation.isValid) {
+        const msg = rateValidation.error || 'Hourly rate must be a valid number.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+    }
+
+    const completionPctNum = Number(form.completionPct);
+    if (isNaN(completionPctNum) || completionPctNum < 0 || completionPctNum > 100) {
+      const msg = 'Completion percentage must be between 0 and 100.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
     const budgetNum = form.budget ? Number(form.budget) : undefined;
     const hourlyRateNum = form.hourlyRate ? Number(form.hourlyRate) : undefined;
-    if (editingProjectId) {
-      updateProject(editingProjectId, {
-        name: form.name,
-        priority: form.priority,
-        completionPct: Number(form.completionPct),
-        tone: form.tone,
-        clientId: form.clientId || undefined,
-        status: form.status,
-        dueDate: form.dueDate || undefined,
-        budget: budgetNum,
-        hourlyRate: hourlyRateNum,
-        assignedMemberIds: form.assignedMemberIds,
-      });
-      logAuditEvent(idToken, organization?.id || null, 'project.updated', 'project', editingProjectId, { name: form.name });
-      showToast({ message: 'Project updated' });
-    } else {
-      const newId = addProject({
-        name: form.name,
-        priority: form.priority,
-        completionPct: Number(form.completionPct),
-        tone: form.tone,
-        clientId: form.clientId || undefined,
-        status: form.status,
-        dueDate: form.dueDate || undefined,
-        budget: budgetNum,
-        hourlyRate: hourlyRateNum,
-        assignedMemberIds: form.assignedMemberIds,
-      });
-      logAuditEvent(idToken, organization?.id || null, 'project.created', 'project', newId, { name: form.name });
-      showToast({ message: 'Project created' });
-    }
-    if (addAnother) {
-      setForm(initialFormState);
-      setEditingProjectId(null);
-    } else {
-      setIsSheetOpen(false);
+
+    setIsSubmitting(true);
+    try {
+      if (editingProjectId) {
+        updateProject(editingProjectId, {
+          name: form.name.trim(),
+          priority: form.priority,
+          completionPct: Number(form.completionPct),
+          tone: form.tone,
+          clientId: form.clientId || undefined,
+          status: form.status,
+          dueDate: form.dueDate || undefined,
+          budget: budgetNum,
+          hourlyRate: hourlyRateNum,
+          assignedMemberIds: form.assignedMemberIds,
+        });
+        logAuditEvent(idToken, organization?.id || null, 'project.updated', 'project', editingProjectId, { name: form.name.trim() });
+        showToast({ message: 'Project updated successfully' });
+      } else {
+        const newId = addProject({
+          name: form.name.trim(),
+          priority: form.priority,
+          completionPct: Number(form.completionPct),
+          tone: form.tone,
+          clientId: form.clientId || undefined,
+          status: form.status,
+          dueDate: form.dueDate || undefined,
+          budget: budgetNum,
+          hourlyRate: hourlyRateNum,
+          assignedMemberIds: form.assignedMemberIds,
+        });
+        logAuditEvent(idToken, organization?.id || null, 'project.created', 'project', newId, { name: form.name.trim() });
+        showToast({ message: 'Project created successfully' });
+      }
+      if (addAnother) {
+        setForm(initialFormState);
+        setEditingProjectId(null);
+      } else {
+        setIsSheetOpen(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to save project.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const confirmArchive = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      setIsArchiveOpen(false);
+      return;
+    }
     if (selectedProjectId) {
       updateProject(selectedProjectId, { status: 'completed', isArchived: true });
       logAuditEvent(idToken, organization?.id || null, 'project.archived', 'project', selectedProjectId, {
@@ -285,6 +340,11 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
   };
 
   const confirmDelete = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      setIsDeleteOpen(false);
+      return;
+    }
     if (selectedProjectId) {
       const openTasks = projectData?.tasks.filter(t => t.status !== 'done').length || 0;
       deleteProject(selectedProjectId);
@@ -299,6 +359,10 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
   };
 
   const handleToggleTask = (task: TaskItem) => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     completeTask(task.id);
     const newStatus = task.status === 'done' ? 'active' : 'done';
     
@@ -320,81 +384,215 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
 
   // Creation Handlers
   const handleCreateTask = () => {
-    if (!taskForm.title || !taskForm.categoryId || !selectedProjectId) return;
-    const selectedAssignee = members.find(m => m.userId === taskForm.assigneeId);
-    const newTaskId = addTask({
-      title: taskForm.title,
-      priority: taskForm.priority,
-      categoryId: taskForm.categoryId,
-      status: 'active',
-      projectId: selectedProjectId,
-      clientId: selectedProject?.clientId,
-      dueDate: taskForm.dueDate || undefined,
-      date: taskForm.dueDate || new Date().toISOString(),
-      assigneeId: taskForm.assigneeId || undefined,
-      assigneeName: selectedAssignee ? (selectedAssignee.name || selectedAssignee.email) : undefined,
-    });
-
-    logAuditEvent(idToken, organization?.id || null, 'task.created', 'project', selectedProjectId, {
-      taskId: newTaskId,
-      title: taskForm.title,
-      assigneeId: taskForm.assigneeId,
-    });
-
-    // Update project completion pct
-    if (selectedProject && projectData) {
-      const total = projectData.tasks.length + 1;
-      const completed = projectData.tasks.filter(t => t.status === 'done').length;
-      const newPct = Math.round((completed / total) * 100);
-      updateProject(selectedProject.id, { completionPct: newPct });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedProjectId) {
+      const msg = 'Please select a project.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const titleValidation = validateRequired(taskForm.title, 'Task title');
+    if (!titleValidation.isValid) {
+      const msg = titleValidation.error || 'Task title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!taskForm.categoryId) {
+      const msg = 'Please select a category for the task.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
-    showToast({ message: 'Task added to project' });
-    setActiveActionSheet(null);
-    setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId, dueDate: '', assigneeId: '' });
+    setIsSubmitting(true);
+    try {
+      const selectedAssignee = members.find(m => m.userId === taskForm.assigneeId);
+      const newTaskId = addTask({
+        title: taskForm.title.trim(),
+        priority: taskForm.priority,
+        categoryId: taskForm.categoryId,
+        status: 'active',
+        projectId: selectedProjectId,
+        clientId: selectedProject?.clientId,
+        dueDate: taskForm.dueDate || undefined,
+        date: taskForm.dueDate || new Date().toISOString(),
+        assigneeId: taskForm.assigneeId || undefined,
+        assigneeName: selectedAssignee ? (selectedAssignee.name || selectedAssignee.email) : undefined,
+      });
+
+      logAuditEvent(idToken, organization?.id || null, 'task.created', 'project', selectedProjectId, {
+        taskId: newTaskId,
+        title: taskForm.title.trim(),
+        assigneeId: taskForm.assigneeId,
+      });
+
+      // Update project completion pct
+      if (selectedProject && projectData) {
+        const total = projectData.tasks.length + 1;
+        const completed = projectData.tasks.filter(t => t.status === 'done').length;
+        const newPct = Math.round((completed / total) * 100);
+        updateProject(selectedProject.id, { completionPct: newPct });
+      }
+
+      showToast({ message: 'Task added to project' });
+      setActiveActionSheet(null);
+      setTaskForm({ title: '', priority: 'Medium', categoryId: taskForm.categoryId, dueDate: '', assigneeId: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to create task.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateEvent = () => {
-    if (!eventForm.title || !selectedProjectId) return;
-    const cat = preferences.categories.find(c => c.scope === 'event');
-    addEvent({
-      ...eventForm,
-      allDay: true,
-      status: 'scheduled',
-      projectId: selectedProjectId,
-      categoryId: cat?.id || '',
-      repeat: 'none'
-    });
-    setActiveActionSheet(null);
-    setEventForm({ title: '', date: new Date().toISOString().split('T')[0], type: 'Deadline' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedProjectId) {
+      const msg = 'Please select a project.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const titleValidation = validateRequired(eventForm.title, 'Event title');
+    if (!titleValidation.isValid) {
+      const msg = titleValidation.error || 'Event title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    setIsSubmitting(true);
+    try {
+      const cat = preferences.categories.find(c => c.scope === 'event');
+      addEvent({
+        ...eventForm,
+        title: eventForm.title.trim(),
+        allDay: true,
+        status: 'scheduled',
+        projectId: selectedProjectId,
+        clientId: selectedProject?.clientId,
+        categoryId: cat?.id || '',
+        repeat: 'none'
+      });
+      showToast({ message: 'Event scheduled for project' });
+      setActiveActionSheet(null);
+      setEventForm({ title: '', date: new Date().toISOString().split('T')[0], type: 'Deadline' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to schedule event.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateLibrary = () => {
-    if (!libForm.name || !selectedProjectId) return;
-    addLibraryItem({
-      ...libForm,
-      projectId: selectedProjectId,
-      tags: []
-    });
-    setActiveActionSheet(null);
-    setLibForm({ name: '', type: 'link', category: 'Project Files', urlOrReference: '' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedProjectId) {
+      const msg = 'Please select a project.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const nameValidation = validateRequired(libForm.name, 'Document name');
+    if (!nameValidation.isValid) {
+      const msg = nameValidation.error || 'Document name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (libForm.type === 'link' && libForm.urlOrReference.trim()) {
+      const urlValidation = validateUrl(libForm.urlOrReference, false);
+      if (!urlValidation.isValid) {
+        const msg = urlValidation.error || 'Please enter a valid web URL.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      addLibraryItem({
+        ...libForm,
+        name: libForm.name.trim(),
+        projectId: selectedProjectId,
+        clientId: selectedProject?.clientId,
+        tags: []
+      });
+      showToast({ message: 'Document added to project library' });
+      setActiveActionSheet(null);
+      setLibForm({ name: '', type: 'link', category: 'Project Files', urlOrReference: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to save resource.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCreateRevenue = () => {
-    if (!revForm.amount || isNaN(Number(revForm.amount)) || !selectedProjectId) return;
-    addRevenue({
-      amount: Number(revForm.amount),
-      date: revForm.date,
-      status: revForm.status,
-      notes: revForm.notes,
-      projectId: selectedProjectId,
-      clientOrProject: selectedProject?.name || ''
-    });
-    setActiveActionSheet(null);
-    setRevForm({ amount: '', date: new Date().toISOString().split('T')[0], status: 'Pending', notes: '' });
+    if (isSubmitting) return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!selectedProjectId) {
+      const msg = 'Please select a project.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const amountValidation = validatePositiveNumber(revForm.amount, 'Revenue amount', false);
+    if (!amountValidation.isValid) {
+      const msg = amountValidation.error || 'Valid positive amount is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = addRevenue({
+        amount: Number(revForm.amount),
+        date: revForm.date,
+        status: revForm.status,
+        notes: revForm.notes,
+        projectId: selectedProjectId,
+        clientId: selectedProject?.clientId,
+        clientOrProject: selectedProject?.name || ''
+      });
+      if (!res.success) {
+        const msg = res.error || 'Failed to record financial entry.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
+      showToast({ message: 'Revenue entry recorded for project' });
+      setActiveActionSheet(null);
+      setRevForm({ amount: '', date: new Date().toISOString().split('T')[0], status: 'Pending', notes: '' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to record financial entry.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleStartTimer = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access' });
+      return;
+    }
     if (!selectedProjectId) return;
     setActiveProjectId(selectedProjectId);
     if (timerState === 'idle') {
@@ -451,7 +649,20 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
             <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-neutral text-tx-primary transition-colors">
               <Search size={20} />
             </button>
-            <button onClick={() => { setForm(initialFormState); setEditingProjectId(null); setIsSheetOpen(true); }} className="w-10 h-10 flex items-center justify-center rounded-full bg-tx-primary text-tx-inverse hover:opacity-90 transition-opacity" aria-label="Add project">
+            <button
+              onClick={() => {
+                if (isReadOnly) {
+                  showToast({ message: 'Viewer role has read-only access' });
+                  return;
+                }
+                setForm(initialFormState);
+                setEditingProjectId(null);
+                setIsSheetOpen(true);
+              }}
+              disabled={isReadOnly}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-tx-primary text-tx-inverse hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Add project"
+            >
               <Plus size={22} />
             </button>
           </div>
@@ -752,23 +963,43 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
                   <div>
                     <h3 className="text-xs font-semibold text-tx-muted uppercase tracking-wider mb-2.5">Quick Actions</h3>
                     <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
-                      <button onClick={() => setActiveActionSheet('task')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('task')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CheckSquare size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">New Task</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('event')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('event')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><CalendarIcon size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">Schedule</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('library')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('library')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><FileText size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">Add File</span>
                       </button>
-                      <button onClick={handleStartTimer} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : handleStartTimer()}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-accent-primary text-tx-primary flex items-center justify-center shrink-0 font-bold"><Play size={15} className="ml-0.5" /></div>
                         <span className="text-xs font-semibold text-tx-primary">Start Timer</span>
                       </button>
-                      <button onClick={() => setActiveActionSheet('revenue')} className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left col-span-2 lg:col-span-1 group shadow-xs">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('revenue')}
+                        disabled={isReadOnly}
+                        className="bg-canvas border border-bd-subtle hover:border-tx-primary rounded-xl p-3 flex flex-col md:flex-row items-center gap-2.5 transition-all text-center md:text-left col-span-2 lg:col-span-1 group shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-surface-neutral text-tx-primary flex items-center justify-center shrink-0 border border-bd-subtle"><DollarSign size={16}/></div>
                         <span className="text-xs font-semibold text-tx-primary">Log Revenue</span>
                       </button>
@@ -1051,7 +1282,11 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
 
               {activeTab === 'schedule' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('event')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button
+                    onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('event')}
+                    disabled={isReadOnly}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     <Plus size={18} /> Schedule Event
                   </button>
                   {projectData.events.length === 0 ? (
@@ -1074,7 +1309,11 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
 
               {activeTab === 'files' && (
                 <div className="space-y-3">
-                  <button onClick={() => setActiveActionSheet('library')} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button
+                    onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('library')}
+                    disabled={isReadOnly}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     <Plus size={18} /> Add Document
                   </button>
                   {projectData.library.length === 0 ? (
@@ -1097,7 +1336,11 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
 
               {activeTab === 'time' && (
                 <div className="space-y-3">
-                  <button onClick={handleStartTimer} className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2">
+                  <button
+                    onClick={handleStartTimer}
+                    disabled={isReadOnly}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-surface-neutral rounded-xl border border-dashed border-bd-subtle text-tx-primary font-medium hover:bg-surface-hover transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     <Play size={18} /> Start Timer
                   </button>
                   {projectData.time.length === 0 ? (
@@ -1148,7 +1391,12 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h3 className="text-[15px] font-semibold text-tx-primary">Revenue Entries</h3>
-                      <button onClick={() => setActiveActionSheet('revenue')} className="text-tx-primary hover:text-accent-primary transition-colors">
+                      <button
+                        onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access' }) : setActiveActionSheet('revenue')}
+                        disabled={isReadOnly}
+                        className="text-tx-primary hover:text-accent-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        aria-label="Add revenue entry"
+                      >
                         <Plus size={20} />
                       </button>
                     </div>
@@ -1182,7 +1430,25 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
       </div>
 
       {/* Primary Sheet: Edit/Create Project */}
-      <BottomSheet isOpen={isSheetOpen} onClose={() => setIsSheetOpen(false)} title={editingProjectId ? "Edit Project" : "New Project"} onSave={() => handleSaveProject(false)} saveLabel="Save">
+      <BottomSheet 
+        isOpen={isSheetOpen} 
+        onClose={() => setIsSheetOpen(false)} 
+        title={editingProjectId ? "Edit Project" : "New Project"} 
+        onSave={() => handleSaveProject(false)} 
+        saveLabel={editingProjectId ? "Save Changes" : "Create Project"}
+        savingLabel={editingProjectId ? "Saving..." : "Creating..."}
+        isSaving={isSubmitting}
+        saveDisabled={
+          isReadOnly ||
+          isSubmitting ||
+          !form.name.trim() ||
+          isNaN(Number(form.completionPct)) ||
+          Number(form.completionPct) < 0 ||
+          Number(form.completionPct) > 100 ||
+          (!!form.budget.trim() && !validatePositiveNumber(form.budget, 'Budget', true).isValid) ||
+          (!!form.hourlyRate.trim() && !validatePositiveNumber(form.hourlyRate, 'Hourly rate', true).isValid)
+        }
+      >
         <BottomSheetField label="Name *"><input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Website Redesign" /></BottomSheetField>
         
         <BottomSheetField label="Client (Optional)">
@@ -1270,7 +1536,16 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
       </BottomSheet>
 
       {/* Action Sheets */}
-      <BottomSheet isOpen={activeActionSheet === 'task'} onClose={() => setActiveActionSheet(null)} title="New Task" onSave={handleCreateTask} saveLabel="Add Task">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'task'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="New Task" 
+        onSave={handleCreateTask} 
+        saveLabel="Create Task"
+        savingLabel="Creating..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !taskForm.title.trim() || !taskForm.categoryId}
+      >
         <BottomSheetField label="Task Title *"><input type="text" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Design wireframes" /></BottomSheetField>
         <div className="grid grid-cols-2 gap-3">
           <BottomSheetField label="Category">
@@ -1298,7 +1573,16 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
         )}
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'event'} onClose={() => setActiveActionSheet(null)} title="Schedule Event" onSave={handleCreateEvent} saveLabel="Schedule">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'event'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="Schedule Event" 
+        onSave={handleCreateEvent} 
+        saveLabel="Save Event"
+        savingLabel="Saving..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !eventForm.title.trim() || !eventForm.date}
+      >
         <BottomSheetField label="Title *"><input type="text" value={eventForm.title} onChange={e => setEventForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Phase 1 Deadline" /></BottomSheetField>
         <div className="grid grid-cols-2 gap-4">
           <BottomSheetField label="Date"><input type="date" value={eventForm.date} onChange={e => setEventForm(f => ({ ...f, date: e.target.value }))} /></BottomSheetField>
@@ -1313,12 +1597,30 @@ export function Projects({ initialProjectId, initialOpenCreate }: { initialProje
         </div>
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'library'} onClose={() => setActiveActionSheet(null)} title="Add Document" onSave={handleCreateLibrary} saveLabel="Save Document">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'library'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="Add Document" 
+        onSave={handleCreateLibrary} 
+        saveLabel="Save Resource"
+        savingLabel="Saving..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !libForm.name.trim() || (libForm.type === 'link' && !!libForm.urlOrReference.trim() && !validateUrl(libForm.urlOrReference, false).isValid)}
+      >
         <BottomSheetField label="Name *"><input type="text" value={libForm.name} onChange={e => setLibForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Figma Link" /></BottomSheetField>
         <BottomSheetField label="Link / URL"><input type="url" value={libForm.urlOrReference} onChange={e => setLibForm(f => ({ ...f, urlOrReference: e.target.value }))} placeholder="https://..." /></BottomSheetField>
       </BottomSheet>
 
-      <BottomSheet isOpen={activeActionSheet === 'revenue'} onClose={() => setActiveActionSheet(null)} title="Add Revenue Entry" onSave={handleCreateRevenue} saveLabel="Add Revenue">
+      <BottomSheet 
+        isOpen={activeActionSheet === 'revenue'} 
+        onClose={() => setActiveActionSheet(null)} 
+        title="Add Revenue Entry" 
+        onSave={handleCreateRevenue} 
+        saveLabel="Save Transaction"
+        savingLabel="Saving..."
+        isSaving={isSubmitting}
+        saveDisabled={isReadOnly || isSubmitting || !revForm.amount.trim() || !validatePositiveNumber(revForm.amount, 'Revenue amount', false).isValid}
+      >
         <BottomSheetField label="Amount *"><input type="number" step="0.01" value={revForm.amount} onChange={e => setRevForm(f => ({ ...f, amount: e.target.value }))} placeholder="e.g. 5000" /></BottomSheetField>
         <div className="grid grid-cols-2 gap-4">
           <BottomSheetField label="Date"><input type="date" value={revForm.date} onChange={e => setRevForm(f => ({ ...f, date: e.target.value }))} /></BottomSheetField>

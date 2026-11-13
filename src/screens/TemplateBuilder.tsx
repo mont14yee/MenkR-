@@ -3,31 +3,36 @@ import { TemplateItem, TemplateType, TemplateTaskDef, TemplateScheduleDef, Templ
 import { Header } from '../components/Shared';
 import { ChevronLeft, Plus, Trash2, GripVertical, Settings2, CheckSquare, Calendar as CalendarIcon, Folder, MoreVertical } from 'lucide-react';
 import { Button, IconButton, Tabs, Badge } from '../components/ui';
-import { BottomSheet, BottomSheetField } from '../components/BottomSheet';
+import { BottomSheet, BottomSheetField, SaveActionButton } from '../components/BottomSheet';
 import { generateId } from '../utils/id';
+import { useToast } from '../context/ToastContext';
+import { validateRequired } from '../utils/validation';
 
 interface Props {
   initialTemplate?: TemplateItem;
-  onSave: (template: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  initialDraft?: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>;
+  onSave: (template: Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>) => void | boolean | Promise<void | boolean>;
   onDismiss: () => void;
 }
 
-export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
+export function TemplateBuilder({ initialTemplate, initialDraft, onSave, onDismiss }: Props) {
+  const { showToast } = useToast();
+  const seed = initialTemplate || initialDraft;
   const [form, setForm] = useState<Omit<TemplateItem, 'id' | 'createdAt' | 'updatedAt'>>(
-    initialTemplate ? {
-      name: initialTemplate.name,
-      type: initialTemplate.type,
-      description: initialTemplate.description || '',
-      isFavorite: initialTemplate.isFavorite,
-      isArchived: initialTemplate.isArchived,
-      projectPriority: initialTemplate.projectPriority || 'high',
-      projectDurationDays: initialTemplate.projectDurationDays || 30,
-      projectNotes: initialTemplate.projectNotes || '',
-      projectTags: initialTemplate.projectTags || [],
-      tasks: initialTemplate.tasks || [],
-      schedule: initialTemplate.schedule || [],
-      checklists: initialTemplate.checklists || [],
-      library: initialTemplate.library || []
+    seed ? {
+      name: seed.name,
+      type: seed.type,
+      description: seed.description || '',
+      isFavorite: seed.isFavorite,
+      isArchived: seed.isArchived,
+      projectPriority: seed.projectPriority || 'high',
+      projectDurationDays: seed.projectDurationDays || 30,
+      projectNotes: seed.projectNotes || '',
+      projectTags: seed.projectTags || [],
+      tasks: seed.tasks || [],
+      schedule: seed.schedule || [],
+      checklists: seed.checklists || [],
+      library: seed.library || []
     } : {
       name: '',
       type: 'project',
@@ -46,6 +51,17 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
   );
 
   const [activeTab, setActiveTab] = useState<'details' | 'tasks' | 'schedule' | 'library'>('details');
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const handleSaveTemplate = async () => {
+    const val = validateRequired(form.name, 'Template name');
+    if (!val.isValid) {
+      const msg = val.error || 'Template name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    return onSave({ ...form, name: val.value! });
+  };
 
   const [isTaskSheetOpen, setTaskSheetOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TemplateTaskDef | null>(null);
@@ -65,11 +81,17 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
   };
 
   const handleSaveTask = () => {
-    if (!taskForm.title.trim()) return;
+    const val = validateRequired(taskForm.title, 'Task title');
+    if (!val.isValid) {
+      const msg = val.error || 'Task title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const cleaned = { ...taskForm, title: val.value! };
     if (editingTask) {
-      setForm(f => ({ ...f, tasks: f.tasks.map(x => x.id === editingTask.id ? taskForm : x) }));
+      setForm(f => ({ ...f, tasks: f.tasks.map(x => x.id === editingTask.id ? cleaned : x) }));
     } else {
-      setForm(f => ({ ...f, tasks: [...f.tasks, taskForm] }));
+      setForm(f => ({ ...f, tasks: [...f.tasks, cleaned] }));
     }
     setTaskSheetOpen(false);
   };
@@ -97,11 +119,17 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
   };
 
   const handleSaveSchedule = () => {
-    if (!scheduleForm.title.trim()) return;
+    const val = validateRequired(scheduleForm.title, 'Event title');
+    if (!val.isValid) {
+      const msg = val.error || 'Event title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const cleaned = { ...scheduleForm, title: val.value! };
     if (editingSchedule) {
-      setForm(f => ({ ...f, schedule: f.schedule.map(x => x.id === editingSchedule.id ? scheduleForm : x) }));
+      setForm(f => ({ ...f, schedule: f.schedule.map(x => x.id === editingSchedule.id ? cleaned : x) }));
     } else {
-      setForm(f => ({ ...f, schedule: [...f.schedule, scheduleForm] }));
+      setForm(f => ({ ...f, schedule: [...f.schedule, cleaned] }));
     }
     setScheduleSheetOpen(false);
   };
@@ -110,7 +138,7 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
     setForm(f => ({ ...f, schedule: f.schedule.filter(x => x.id !== id) }));
   };
 
-    const [isLibrarySheetOpen, setLibrarySheetOpen] = useState(false);
+  const [isLibrarySheetOpen, setLibrarySheetOpen] = useState(false);
   const [editingLibrary, setEditingLibrary] = useState<TemplateLibraryDef | null>(null);
   const defaultLibrary: TemplateLibraryDef = { id: '', name: '', type: 'file', category: 'Documents', tags: [] };
   const [libraryForm, setLibraryForm] = useState<TemplateLibraryDef>(defaultLibrary);
@@ -127,11 +155,17 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
   };
 
   const handleSaveLibrary = () => {
-    if (!libraryForm.name.trim()) return;
+    const val = validateRequired(libraryForm.name, 'Resource name');
+    if (!val.isValid) {
+      const msg = val.error || 'Resource name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    const cleaned = { ...libraryForm, name: val.value! };
     if (editingLibrary) {
-      setForm(f => ({ ...f, library: f.library.map(x => x.id === editingLibrary.id ? libraryForm : x) }));
+      setForm(f => ({ ...f, library: f.library.map(x => x.id === editingLibrary.id ? cleaned : x) }));
     } else {
-      setForm(f => ({ ...f, library: [...f.library, libraryForm] }));
+      setForm(f => ({ ...f, library: [...f.library, cleaned] }));
     }
     setLibrarySheetOpen(false);
   };
@@ -150,9 +184,21 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
            </IconButton>
          }
          rightIcon={
-           <Button onClick={() => onSave(form)} disabled={!form.name.trim()}>Save</Button>
+           <SaveActionButton
+             variant="compact"
+             onSave={handleSaveTemplate}
+             label={initialTemplate ? 'Save Changes' : 'Create Template'}
+             savingLabel={initialTemplate ? 'Saving...' : 'Creating...'}
+             disabled={!form.name.trim()}
+             onError={setSaveError}
+           />
          }
        />
+       {saveError && (
+         <div role="alert" className="mx-4 mt-2 px-3.5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 text-[13px] font-medium">
+           {saveError}
+         </div>
+       )}
        
        <div className="px-4 py-2 border-b border-bd-subtle">
          <Tabs 
@@ -372,7 +418,15 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
        </div>
 
        {/* Task Sheet */}
-       <BottomSheet isOpen={isTaskSheetOpen} onClose={() => setTaskSheetOpen(false)} title={editingTask ? "Edit Template Task" : "New Template Task"} onSave={handleSaveTask}>
+       <BottomSheet
+         isOpen={isTaskSheetOpen}
+         onClose={() => setTaskSheetOpen(false)}
+         title={editingTask ? "Edit Template Task" : "New Template Task"}
+         onSave={handleSaveTask}
+         saveLabel={editingTask ? 'Save Changes' : 'Create Task'}
+         savingLabel={editingTask ? 'Saving...' : 'Creating...'}
+         saveDisabled={!taskForm.title.trim()}
+       >
          <BottomSheetField>
            <input type="text" placeholder="Task Title (supports variables)" value={taskForm.title} onChange={e => setTaskForm({...taskForm, title: e.target.value})} className="w-full text-[20px] font-medium text-tx-primary placeholder:text-tx-muted/50 bg-transparent outline-none py-2" autoFocus />
          </BottomSheetField>
@@ -400,7 +454,15 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
        </BottomSheet>
 
        {/* Schedule Sheet */}
-       <BottomSheet isOpen={isScheduleSheetOpen} onClose={() => setScheduleSheetOpen(false)} title={editingSchedule ? "Edit Template Event" : "New Template Event"} onSave={handleSaveSchedule}>
+       <BottomSheet
+         isOpen={isScheduleSheetOpen}
+         onClose={() => setScheduleSheetOpen(false)}
+         title={editingSchedule ? "Edit Template Event" : "New Template Event"}
+         onSave={handleSaveSchedule}
+         saveLabel={editingSchedule ? 'Save Changes' : 'Save Event'}
+         savingLabel="Saving..."
+         saveDisabled={!scheduleForm.title.trim()}
+       >
          <BottomSheetField>
            <input type="text" placeholder="Event Title (supports variables)" value={scheduleForm.title} onChange={e => setScheduleForm({...scheduleForm, title: e.target.value})} className="w-full text-[20px] font-medium text-tx-primary placeholder:text-tx-muted/50 bg-transparent outline-none py-2" autoFocus />
          </BottomSheetField>
@@ -433,7 +495,15 @@ export function TemplateBuilder({ initialTemplate, onSave, onDismiss }: Props) {
 
 
        {/* Library Sheet */}
-       <BottomSheet isOpen={isLibrarySheetOpen} onClose={() => setLibrarySheetOpen(false)} title={editingLibrary ? "Edit Library Folder/Asset" : "New Library Folder/Asset"} onSave={handleSaveLibrary}>
+       <BottomSheet
+         isOpen={isLibrarySheetOpen}
+         onClose={() => setLibrarySheetOpen(false)}
+         title={editingLibrary ? "Edit Library Folder/Asset" : "New Library Folder/Asset"}
+         onSave={handleSaveLibrary}
+         saveLabel={editingLibrary ? 'Save Changes' : 'Save Resource'}
+         savingLabel="Saving..."
+         saveDisabled={!libraryForm.name.trim()}
+       >
          <BottomSheetField>
            <input type="text" placeholder="Folder/Asset Name (supports variables)" value={libraryForm.name} onChange={e => setLibraryForm({...libraryForm, name: e.target.value})} className="w-full text-[20px] font-medium text-tx-primary placeholder:text-tx-muted/50 bg-transparent outline-none py-2" autoFocus />
          </BottomSheetField>

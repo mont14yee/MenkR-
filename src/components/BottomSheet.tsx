@@ -1,6 +1,113 @@
 import React, { ReactNode, useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
-import { Header } from './Shared';
+import { X, Loader2, AlertCircle } from 'lucide-react';
+
+export interface SaveActionButtonProps {
+  onSave: () => void | boolean | Promise<void | boolean>;
+  label?: string;
+  savingLabel?: string;
+  disabled?: boolean;
+  isSaving?: boolean;
+  onError?: (message: string | null) => void;
+  className?: string;
+  variant?: 'sheet' | 'compact';
+  type?: 'button' | 'submit';
+}
+
+export function SaveActionButton({
+  onSave,
+  label = 'Save',
+  savingLabel = 'Saving...',
+  disabled = false,
+  isSaving = false,
+  onError,
+  className = '',
+  variant = 'sheet',
+  type = 'button',
+}: SaveActionButtonProps) {
+  const [internalSaving, setInternalSaving] = useState(false);
+  const submitLockRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const effectiveSaving = isSaving || internalSaving;
+
+  const handleClick = async () => {
+    if (disabled || effectiveSaving || submitLockRef.current) return;
+    submitLockRef.current = true;
+    onError?.(null);
+
+    let failed = false;
+    try {
+      const result = onSave();
+      if (result != null && typeof (result as Promise<unknown>).then === 'function') {
+        if (isMountedRef.current) setInternalSaving(true);
+        const resolved = await result;
+        if (resolved === false) failed = true;
+      } else if (result === false) {
+        failed = true;
+      }
+    } catch (err: unknown) {
+      failed = true;
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Unable to save changes. Please try again.';
+      onError?.(message);
+    } finally {
+      if (isMountedRef.current) {
+        setInternalSaving(false);
+      }
+      if (failed) {
+        submitLockRef.current = false;
+      } else {
+        setTimeout(() => {
+          submitLockRef.current = false;
+        }, 120);
+      }
+    }
+  };
+
+  const variantClasses =
+    variant === 'sheet'
+      ? 'w-full py-3.5 rounded-full bg-tx-primary text-tx-inverse text-[15px] font-medium active:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-canvas focus:ring-tx-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2'
+      : 'inline-flex items-center justify-center h-10 px-4 text-sm font-medium rounded-xl gap-2 bg-tx-primary text-canvas hover:bg-tx-primary/90 active:bg-tx-primary/80 shadow-xs border border-transparent transition-all duration-150 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bd-focus focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]';
+
+  return (
+    <button
+      type={type}
+      onClick={handleClick}
+      disabled={disabled || effectiveSaving}
+      aria-busy={effectiveSaving || undefined}
+      className={`${variantClasses} ${className}`.trim()}
+    >
+      {effectiveSaving && (
+        <Loader2 size={17} className="animate-spin shrink-0" aria-hidden="true" />
+      )}
+      <span>{effectiveSaving ? savingLabel : label}</span>
+    </button>
+  );
+}
+
+export interface BottomSheetProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  onSave?: () => void | boolean | Promise<void | boolean>;
+  saveLabel?: string;
+  savingLabel?: string;
+  saveDisabled?: boolean;
+  isSaving?: boolean;
+  saveError?: string | null;
+  onSaveError?: (error: string | null) => void;
+  secondaryAction?: ReactNode;
+}
 
 export function BottomSheet({
   isOpen,
@@ -9,31 +116,38 @@ export function BottomSheet({
   children,
   onSave,
   saveLabel = 'Save',
+  savingLabel = 'Saving...',
+  saveDisabled = false,
+  isSaving = false,
+  saveError = null,
+  onSaveError,
   secondaryAction,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  children: ReactNode;
-  onSave?: () => void;
-  saveLabel?: string;
-  secondaryAction?: ReactNode;
-}) {
+}: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const [internalError, setInternalError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-          onClose();
-        }
-      };
-      document.addEventListener('keydown', handleKeyDown);
-      return () => document.removeEventListener('keydown', handleKeyDown);
+    if (!isOpen) {
+      setInternalError(null);
+      return;
     }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
+
+  const displayedError = saveError || internalError;
+
+  const handleError = (msg: string | null) => {
+    setInternalError(msg);
+    onSaveError?.(msg);
+  };
 
   return (
     <>
@@ -63,13 +177,25 @@ export function BottomSheet({
         </div>
         
         <div className="p-5 border-t border-bd-subtle bg-canvas shrink-0 flex flex-col gap-2">
-          {onSave && (
-            <button
-              onClick={onSave}
-              className="w-full py-3.5 rounded-full bg-tx-primary text-tx-inverse text-[15px] font-medium active:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-canvas focus:ring-tx-primary"
+          {displayedError && (
+            <div
+              role="alert"
+              className="px-3.5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 text-[13px] font-medium flex items-center gap-2"
             >
-              {saveLabel}
-            </button>
+              <AlertCircle size={15} className="shrink-0" aria-hidden="true" />
+              <span className="leading-snug">{displayedError}</span>
+            </div>
+          )}
+          {onSave && (
+            <SaveActionButton
+              onSave={onSave}
+              label={saveLabel}
+              savingLabel={savingLabel}
+              disabled={saveDisabled}
+              isSaving={isSaving}
+              onError={handleError}
+              variant="sheet"
+            />
           )}
           {secondaryAction}
         </div>

@@ -194,50 +194,65 @@ export function Library({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleSave = () => {
-    if (isReadOnly) return;
-    if (!validateRequired(form.name)) {
-      showToast({ message: "Item title is required." });
-      return;
+    if (isReadOnly) {
+      throw new Error('Viewer mode: Uploading or editing files is restricted.');
+    }
+    const nameVal = validateRequired(form.name, 'Title');
+    if (!nameVal.isValid) {
+      const msg = 'Item title is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     if (form.type === 'link') {
-      if (!validateRequired(form.urlOrReference)) {
-        showToast({ message: "Please enter a valid web URL." });
-        return;
+      const reqUrl = validateRequired(form.urlOrReference, 'URL');
+      if (!reqUrl.isValid) {
+        const msg = 'Please enter a valid web URL.';
+        showToast({ message: msg });
+        throw new Error(msg);
       }
-      if (!validateUrl(form.urlOrReference)) {
-        showToast({ message: "URL must start with http:// or https://" });
-        return;
+      const urlVal = validateUrl(form.urlOrReference, true);
+      if (!urlVal.isValid) {
+        const msg = urlVal.error || 'Please enter a valid web URL.';
+        showToast({ message: msg });
+        throw new Error(msg);
       }
     }
 
     if (form.type === 'file' && !form.urlOrReference && !editingItem) {
-      showToast({ message: "Please choose a file to upload." });
-      return;
+      const msg = 'Please choose a file to upload.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    
-    if (editingItem) {
-      updateLibraryItem(editingItem.id, form);
-      showToast({ message: "Library resource updated." });
-    } else {
-      addLibraryItem({
-        name: form.name.trim(),
-        type: form.type as any,
-        category: form.category as any,
-        urlOrReference: form.urlOrReference || '',
-        fileId: form.fileId,
-        sha256: form.sha256,
-        size: form.size,
-        mimeType: form.mimeType,
-        description: form.description,
-        clientId: form.clientId,
-        projectId: form.projectId,
-        tags: form.tags || [],
-        isFavorite: false
-      });
-      showToast({ message: "Resource securely added to library." });
+
+    try {
+      if (editingItem) {
+        updateLibraryItem(editingItem.id, { ...form, name: nameVal.value! });
+        showToast({ message: 'Library resource updated.' });
+      } else {
+        addLibraryItem({
+          name: nameVal.value!,
+          type: form.type as any,
+          category: form.category as any,
+          urlOrReference: form.urlOrReference || '',
+          fileId: form.fileId,
+          sha256: form.sha256,
+          size: form.size,
+          mimeType: form.mimeType,
+          description: form.description,
+          clientId: form.clientId,
+          projectId: form.projectId,
+          tags: form.tags || [],
+          isFavorite: false
+        });
+        showToast({ message: 'Resource securely added to library.' });
+      }
+      setItemFormOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save library resource. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
     }
-    setItemFormOpen(false);
   };
 
   // Safe Download Handler with Role & Token Validation
@@ -564,6 +579,16 @@ export function Library({ onDismiss }: { onDismiss: () => void }) {
         onClose={() => setItemFormOpen(false)} 
         title={editingItem ? "Edit Resource Metadata" : `New ${form.type === 'file' ? 'File' : form.type === 'link' ? 'Link' : 'Note'}`} 
         onSave={handleSave}
+        saveLabel="Save Resource"
+        savingLabel="Saving..."
+        isSaving={isUploading}
+        saveDisabled={
+          isReadOnly ||
+          isUploading ||
+          !(form.name || '').trim() ||
+          (form.type === 'link' && !validateUrl(form.urlOrReference, true).isValid) ||
+          (form.type === 'file' && !editingItem && !form.urlOrReference)
+        }
       >
         {form.type === 'file' && !editingItem && (
           <div className="mb-3">
@@ -652,7 +677,10 @@ export function Library({ onDismiss }: { onDismiss: () => void }) {
             <SearchPicker 
               items={projects.map(p => ({ id: p.id, label: p.name }))} 
               value={form.projectId || ''} 
-              onChange={(id) => setForm({...form, projectId: id})} 
+              onChange={(id) => {
+                const proj = projects.find(p => p.id === id);
+                setForm({ ...form, projectId: id, clientId: proj?.clientId || form.clientId });
+              }} 
             />
           </BottomSheetField>
 

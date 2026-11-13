@@ -14,6 +14,7 @@ import { usePreferences } from '../context/PreferencesContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency } from '../utils/currency';
 import { getTodayDateStr } from '../utils/date';
+import { validatePositiveNumber } from '../utils/validation';
 import { TimeEntry } from '../types';
 
 export function TimeTracker({ onDismiss }: { onDismiss: () => void }) {
@@ -140,6 +141,11 @@ export function TimeTracker({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleConfirmStart = () => {
+    if (isViewer) {
+      const msg = 'Viewer role has read-only access. Cannot start timers.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
     setStartSheetOpen(false);
     startTimer();
   };
@@ -164,65 +170,84 @@ export function TimeTracker({ onDismiss }: { onDismiss: () => void }) {
 
   const handleSave = () => {
     if (isViewer) {
-      showToast({ message: 'Viewer role has read-only access' });
-      return;
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     const totalSecs = parseDurationStringToSeconds(manualDuration);
     if (totalSecs <= 0) {
-      showToast({ message: 'Duration must be greater than 00:00:00' });
-      return;
+      const msg = 'Duration must be greater than 00:00:00';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
     if (totalSecs > 86400) {
-      showToast({ message: 'Duration cannot exceed 24 hours per time entry.' });
-      return;
+      const msg = 'Duration cannot exceed 24 hours per time entry.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
-    const rateNum = entryHourlyRate ? parseFloat(entryHourlyRate) : activeHourlyRate;
-
-    if (editingEntry) {
-      const res = updateTimeEntry(editingEntry.id, {
-        projectId: activeProjectId || undefined,
-        taskId: activeTaskId || undefined,
-        clientId: activeClientId || undefined,
-        durationSeconds: totalSecs,
-        startedAt: entryDate ? `${entryDate}T09:00:00.000Z` : editingEntry.startedAt,
-        note: activeNote,
-        billable: activeBillable,
-        hourlyRate: activeBillable && rateNum != null && rateNum >= 0 ? rateNum : undefined,
-        userId: entryAssigneeId || undefined,
-        userName: entryAssigneeName || undefined,
-      });
-
-      if (!res.success) {
-        showToast({ message: res.error || 'Failed to update entry' });
-        return;
+    if (activeBillable && entryHourlyRate.trim()) {
+      const rateVal = validatePositiveNumber(entryHourlyRate, 'Hourly rate', true);
+      if (!rateVal.isValid) {
+        const msg = rateVal.error || 'Hourly rate must be a valid non-negative number.';
+        showToast({ message: msg });
+        throw new Error(msg);
       }
-      showToast({ message: 'Time entry updated successfully' });
-    } else {
-      const res = addTimeEntry({
-        projectId: activeProjectId || undefined,
-        taskId: activeTaskId || undefined,
-        clientId: activeClientId || undefined,
-        durationSeconds: totalSecs,
-        startedAt: timerStartedAt || (entryDate ? `${entryDate}T09:00:00.000Z` : new Date().toISOString()),
-        note: activeNote,
-        billable: activeBillable,
-        hourlyRate: activeBillable && rateNum != null && rateNum >= 0 ? rateNum : undefined,
-        userId: entryAssigneeId || user?.uid || undefined,
-        userName: entryAssigneeName || user?.displayName || user?.email || 'Self',
-      });
-
-      if (!res.success) {
-        showToast({ message: res.error || 'Failed to save time entry' });
-        return;
-      }
-      showToast({ message: 'Time logged successfully' });
-      resetTimer();
     }
 
-    setSaveSheetOpen(false);
-    setEditingEntry(null);
+    const rateNum = entryHourlyRate.trim() ? parseFloat(entryHourlyRate) : activeHourlyRate;
+
+    try {
+      if (editingEntry) {
+        const res = updateTimeEntry(editingEntry.id, {
+          projectId: activeProjectId || undefined,
+          taskId: activeTaskId || undefined,
+          clientId: activeClientId || undefined,
+          durationSeconds: totalSecs,
+          startedAt: entryDate ? `${entryDate}T09:00:00.000Z` : editingEntry.startedAt,
+          note: activeNote,
+          billable: activeBillable,
+          hourlyRate: activeBillable && rateNum != null && rateNum >= 0 ? rateNum : undefined,
+          userId: entryAssigneeId || undefined,
+          userName: entryAssigneeName || undefined,
+        });
+
+        if (!res.success) {
+          const msg = res.error || 'Failed to update entry';
+          showToast({ message: msg });
+          throw new Error(msg);
+        }
+        showToast({ message: 'Time entry updated successfully' });
+      } else {
+        const res = addTimeEntry({
+          projectId: activeProjectId || undefined,
+          taskId: activeTaskId || undefined,
+          clientId: activeClientId || undefined,
+          durationSeconds: totalSecs,
+          startedAt: timerStartedAt || (entryDate ? `${entryDate}T09:00:00.000Z` : new Date().toISOString()),
+          note: activeNote,
+          billable: activeBillable,
+          hourlyRate: activeBillable && rateNum != null && rateNum >= 0 ? rateNum : undefined,
+          userId: entryAssigneeId || user?.uid || undefined,
+          userName: entryAssigneeName || user?.displayName || user?.email || 'Self',
+        });
+
+        if (!res.success) {
+          const msg = res.error || 'Failed to save time entry';
+          showToast({ message: msg });
+          throw new Error(msg);
+        }
+        showToast({ message: 'Time logged successfully' });
+        resetTimer();
+      }
+
+      setSaveSheetOpen(false);
+      setEditingEntry(null);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save time entry. Please try again.';
+      throw err instanceof Error ? err : new Error(msg);
+    }
   };
 
   const handleManualEntry = () => {
@@ -727,6 +752,8 @@ export function TimeTracker({ onDismiss }: { onDismiss: () => void }) {
         title="Start Timer"
         onSave={handleConfirmStart}
         saveLabel="Start"
+        savingLabel="Starting..."
+        saveDisabled={isViewer}
       >
         <BottomSheetField label="Project (Optional)">
           <SearchPicker
@@ -804,7 +831,14 @@ export function TimeTracker({ onDismiss }: { onDismiss: () => void }) {
         }}
         title={editingEntry ? 'Edit Time Entry' : 'Save Time Record'}
         onSave={handleSave}
-        saveLabel="Save"
+        saveLabel={editingEntry ? 'Save Changes' : 'Save Time Entry'}
+        savingLabel="Saving..."
+        saveDisabled={
+          isViewer ||
+          parseDurationStringToSeconds(manualDuration) <= 0 ||
+          parseDurationStringToSeconds(manualDuration) > 86400 ||
+          (activeBillable && !!entryHourlyRate.trim() && !validatePositiveNumber(entryHourlyRate, 'Hourly rate', true).isValid)
+        }
         secondaryAction={
           !editingEntry ? (
             <button

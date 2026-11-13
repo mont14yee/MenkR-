@@ -44,7 +44,7 @@ describe('MenkiR App Tests', () => {
     let nameInput = screen.getByPlaceholderText(/jane doe/i);
     await user.type(nameInput, 'John Doe Test');
     
-    const saveBtn = screen.getByRole('button', { name: /^save$/i });
+    const saveBtn = screen.getByRole('button', { name: /^create client$/i });
     await user.click(saveBtn);
     
     let clientsData = JSON.parse(localStorage.getItem('menkir-clients') || '[]');
@@ -66,7 +66,7 @@ describe('MenkiR App Tests', () => {
     await user.type(nameInput, 'Jane Doe Test');
     
     // Re-query save button just in case
-    const saveEditBtn = screen.getByRole('button', { name: /^save$/i });
+    const saveEditBtn = screen.getByRole('button', { name: /^save changes$/i });
     await user.click(saveEditBtn);
     
     clientsData = JSON.parse(localStorage.getItem('menkir-clients') || '[]');
@@ -92,7 +92,7 @@ describe('MenkiR App Tests', () => {
     
     const nameInput = screen.getByPlaceholderText(/jane doe/i);
     await user.type(nameInput, 'Persistent Client');
-    await user.click(screen.getByRole('button', { name: /^save$/i }));
+    await user.click(screen.getByRole('button', { name: /^create client$/i }));
     
     expect(JSON.parse(localStorage.getItem('menkir-clients') || '[]').length).toBe(1);
     

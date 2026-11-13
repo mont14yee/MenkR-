@@ -25,7 +25,8 @@ describe('Templates Workflow', () => {
     const nameInput = screen.getByPlaceholderText('e.g., New Client Onboarding');
     await user.type(nameInput, 'Onboarding Template');
     
-    await user.click(screen.getByText('Save'));
+    const createBtns = screen.getAllByRole('button', { name: /^create template$/i });
+    await user.click(createBtns[createBtns.length - 1]);
 
     // 4. Verify it's in the list
     await waitFor(() => {

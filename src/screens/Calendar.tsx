@@ -269,11 +269,12 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
       setEditingEvent(null);
       setSelectedTaskDetail(null);
       setSelectedProjectDetail(null);
+      const filterProj = filterProjectId ? projects.find(p => p.id === filterProjectId) : undefined;
       setForm({ 
         ...defaultForm, 
         date: currentDate.toISOString().split('T')[0],
         projectId: filterProjectId || undefined,
-        clientId: filterClientId || undefined,
+        clientId: filterClientId || filterProj?.clientId || undefined,
       });
       setSheetOpen(true);
       return;
@@ -293,36 +294,51 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
   };
 
   const handleSave = () => {
-    if (isReadOnly) return;
+    if (isReadOnly) {
+      throw new Error('Viewing in read-only mode.');
+    }
     setDateValidationError(null);
 
     if (!form.title.trim()) {
-      setDateValidationError('Event title is required');
-      return;
+      const msg = 'Event title is required';
+      setDateValidationError(msg);
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     // Date Validation
     if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) {
-      setDateValidationError('Invalid date format. Use YYYY-MM-DD');
-      return;
+      const msg = 'Invalid date format. Use YYYY-MM-DD';
+      setDateValidationError(msg);
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     // Time Validation
     if (!form.allDay && form.startTime && form.endTime) {
       if (form.startTime > form.endTime) {
-        setDateValidationError('Start time must be before end time');
-        return;
+        const msg = 'Start time must be before end time';
+        setDateValidationError(msg);
+        showToast({ message: msg });
+        throw new Error(msg);
       }
     }
 
-    if (editingEvent) {
-      updateEvent(editingEvent.id, form);
-      showToast({ message: 'Scheduled event updated' });
-    } else {
-      addEvent(form);
-      showToast({ message: 'Event added to schedule' });
+    try {
+      if (editingEvent) {
+        updateEvent(editingEvent.id, { ...form, title: form.title.trim() });
+        showToast({ message: 'Scheduled event updated' });
+      } else {
+        addEvent({ ...form, title: form.title.trim() });
+        showToast({ message: 'Event added to schedule' });
+      }
+      setSheetOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save event. Please try again.';
+      setDateValidationError(msg);
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
     }
-    setSheetOpen(false);
   };
 
   // iCalendar (.ics) Export Generator (RFC 5545 Compliance)
@@ -610,10 +626,15 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (isReadOnly) {
+                                showToast({ message: 'Viewer role has read-only access' });
+                                return;
+                              }
                               completeTask(item.rawTask!.id);
                               showToast({ message: isCompleted ? 'Task marked active' : 'Task marked complete' });
                             }}
-                            className="p-1.5 text-tx-muted hover:text-tx-primary transition-colors"
+                            disabled={isReadOnly}
+                            className="p-1.5 text-tx-muted hover:text-tx-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Toggle completion"
                           >
                             {isCompleted ? <CheckCircle2 size={18} className="text-accent-secondary" /> : <Circle size={18} />}
@@ -779,6 +800,14 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
         onClose={() => setSheetOpen(false)}
         title={editingEvent ? 'Edit Event' : 'New Schedule Commitment'}
         onSave={handleSave}
+        saveLabel={editingEvent ? 'Save Changes' : 'Save Event'}
+        savingLabel="Saving..."
+        saveDisabled={
+          isReadOnly ||
+          !form.title.trim() ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(form.date) ||
+          (!form.allDay && !!form.startTime && !!form.endTime && form.startTime > form.endTime)
+        }
       >
         {dateValidationError && (
           <div className="mb-3 p-2.5 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-xs text-red-600 font-medium">
@@ -857,7 +886,10 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
             <SearchPicker
               items={projects.map(p => ({ id: p.id, label: p.name }))}
               value={form.projectId}
-              onChange={(id) => setForm(f => ({ ...f, projectId: id }))}
+              onChange={(id) => {
+                const proj = projects.find(p => p.id === id);
+                setForm(f => ({ ...f, projectId: id, clientId: proj?.clientId || f.clientId }));
+              }}
             />
           </BottomSheetField>
 
@@ -892,7 +924,7 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
           />
         </BottomSheetField>
 
-        {editingEvent && (
+        {editingEvent && !isReadOnly && (
           <div className="pt-3 border-t border-bd-subtle flex gap-2">
             <button 
               type="button"
@@ -1049,6 +1081,11 @@ export function Calendar({ onDismiss }: { onDismiss?: () => void }) {
         isOpen={isDeleteConfirmOpen}
         onCancel={() => setDeleteConfirmOpen(false)}
         onConfirm={() => {
+          if (isReadOnly) {
+            showToast({ message: 'Viewer role has read-only access' });
+            setDeleteConfirmOpen(false);
+            return;
+          }
           if (editingEvent) {
             deleteEvent(editingEvent.id);
             setSheetOpen(false);

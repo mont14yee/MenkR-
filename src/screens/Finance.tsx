@@ -372,12 +372,13 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
       });
     } else {
       setEditingEntry(null);
+      const filterProj = filterProjectId ? projects.find((p) => p.id === filterProjectId) : undefined;
       setLogForm({
         type: defaultType,
         amount: '',
         clientOrProject: '',
         category: defaultType === 'expense' ? 'Software & SaaS' : 'Services',
-        clientId: filterClientId,
+        clientId: filterClientId || filterProj?.clientId || '',
         projectId: filterProjectId,
         status: 'Paid',
         date: getTodayDateStr(),
@@ -391,14 +392,16 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
 
   const handleSaveLog = () => {
     if (isViewer) {
-      showToast({ message: 'Viewer role has read-only access' });
-      return;
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     const parsedAmount = parseFloat(logForm.amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      showToast({ message: 'Please enter a valid amount greater than 0' });
-      return;
+      const msg = 'Please enter a valid amount greater than 0';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
 
     const entryData = {
@@ -415,26 +418,33 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
       notes: logForm.notes || undefined,
     };
 
-    if (editingEntry) {
-      const res = updateRevenue(editingEntry.id, entryData);
-      if (!res.success) {
-        showToast({ message: res.error || 'Failed to update record' });
-        return;
+    try {
+      if (editingEntry) {
+        const res = updateRevenue(editingEntry.id, entryData);
+        if (!res.success) {
+          const msg = res.error || 'Failed to update record';
+          showToast({ message: msg });
+          throw new Error(msg);
+        }
+        showToast({ message: `${logForm.type === 'expense' ? 'Expense' : 'Revenue'} updated` });
+      } else {
+        const res = addRevenue(entryData);
+        if (!res.success) {
+          const msg = res.error || 'Failed to record entry';
+          showToast({ message: msg });
+          throw new Error(msg);
+        }
+        showToast({
+          message: `${logForm.type === 'expense' ? 'Expense recorded' : 'Revenue logged'}`,
+          actionLabel: 'Log another',
+          onAction: () => handleOpenLogSheet(undefined, logForm.type),
+        });
       }
-      showToast({ message: `${logForm.type === 'expense' ? 'Expense' : 'Revenue'} updated` });
-    } else {
-      const res = addRevenue(entryData);
-      if (!res.success) {
-        showToast({ message: res.error || 'Failed to record entry' });
-        return;
-      }
-      showToast({
-        message: `${logForm.type === 'expense' ? 'Expense recorded' : 'Revenue logged'}`,
-        actionLabel: 'Log another',
-        onAction: () => handleOpenLogSheet(undefined, logForm.type),
-      });
+      setLogSheetOpen(false);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save financial record. Please try again.';
+      throw err instanceof Error ? err : new Error(msg);
     }
-    setLogSheetOpen(false);
   };
 
   const handleDeleteEntry = () => {
@@ -452,17 +462,25 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
 
   const handleSaveGoal = () => {
     if (isViewer) {
-      showToast({ message: 'Viewer role has read-only access' });
-      return;
+      const msg = 'Viewer role has read-only access';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
     const parsedGoal = parseFloat(goalForm.amount);
     if (isNaN(parsedGoal) || parsedGoal <= 0) {
-      showToast({ message: 'Please enter a valid goal greater than 0' });
-      return;
+      const msg = 'Please enter a valid goal greater than 0';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    setYearlyGoal(parsedGoal);
-    setGoalSheetOpen(false);
-    showToast({ message: 'Annual target updated' });
+    try {
+      setYearlyGoal(parsedGoal);
+      setGoalSheetOpen(false);
+      showToast({ message: 'Annual target updated' });
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to update annual target. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    }
   };
 
   const handleExportCSV = () => {
@@ -1102,6 +1120,14 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
         onClose={() => setLogSheetOpen(false)}
         title={editingEntry ? 'Edit Financial Record' : 'Record Transaction'}
         onSave={handleSaveLog}
+        saveLabel={editingEntry ? 'Save Changes' : 'Save Transaction'}
+        savingLabel="Saving..."
+        saveDisabled={
+          isViewer ||
+          !logForm.amount.trim() ||
+          isNaN(parseFloat(logForm.amount)) ||
+          parseFloat(logForm.amount) <= 0
+        }
       >
         {/* Type Toggle: Income vs Expense */}
         <BottomSheetField label="Transaction Type">
@@ -1187,7 +1213,11 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
           <BottomSheetField label="Project (Optional)">
             <select
               value={logForm.projectId}
-              onChange={(e) => setLogForm({ ...logForm, projectId: e.target.value })}
+              onChange={(e) => {
+                const pid = e.target.value;
+                const proj = projects.find((p) => p.id === pid);
+                setLogForm((f) => ({ ...f, projectId: pid, clientId: proj?.clientId || f.clientId }));
+              }}
               className="w-full px-4 py-3 rounded-xl bg-surface-neutral border-none text-[14px] outline-none"
             >
               <option value="">No Project</option>
@@ -1265,6 +1295,14 @@ export function Finance({ onDismiss }: { onDismiss: () => void }) {
         onClose={() => setGoalSheetOpen(false)}
         title="Edit Annual Target"
         onSave={handleSaveGoal}
+        saveLabel="Save Target"
+        savingLabel="Saving..."
+        saveDisabled={
+          isViewer ||
+          !goalForm.amount.trim() ||
+          isNaN(parseFloat(goalForm.amount)) ||
+          parseFloat(goalForm.amount) <= 0
+        }
       >
         <BottomSheetField label="Annual Target Amount">
           <div className="flex items-center text-[28px] font-light text-tx-primary">

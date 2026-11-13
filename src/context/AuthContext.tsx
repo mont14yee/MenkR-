@@ -203,7 +203,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const createOrg = async (name: string, currency = 'USD'): Promise<OrgInfo | null> => {
     let token = idToken;
     if (!token && user) token = await refreshToken();
-    if (!token) return null;
+    if (!token) {
+      const msg = 'Please sign in to create a workspace.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
 
     try {
       const res = await fetch('/api/organizations', {
@@ -216,8 +220,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to create organization');
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to create organization (${res.status})`);
       }
 
       const created: OrgInfo = await res.json();
@@ -228,8 +232,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return created;
     } catch (err: any) {
       console.error('Create organization error:', err);
-      showToast({ message: err.message || 'Failed to create organization' });
-      return null;
+      const msg = err?.message || 'Network error while creating organization.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
     }
   };
 

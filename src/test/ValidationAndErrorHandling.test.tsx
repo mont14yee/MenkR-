@@ -163,4 +163,317 @@ describe('Validation, Error Handling, and Resilience', () => {
       ).rejects.toThrow('Database constraint violation: duplicate slug');
     });
   });
+
+  describe('BottomSheet Form Save and Submission Resilience', () => {
+    beforeEach(async () => {
+      const { cleanup } = await import('@testing-library/react');
+      cleanup();
+    });
+
+    it('disables save button and displays saving state when isSaving is true', async () => {
+      const { render, screen } = await import('@testing-library/react');
+      const { BottomSheet } = await import('../components/BottomSheet');
+
+      const onSaveMock = vi.fn();
+      const { rerender } = render(
+        <BottomSheet
+          isOpen={true}
+          onClose={() => {}}
+          title="Create Record"
+          onSave={onSaveMock}
+          saveLabel="Save"
+          isSaving={false}
+          saveDisabled={false}
+        >
+          <div>Form Content</div>
+        </BottomSheet>
+      );
+
+      const saveBtn = screen.getByRole('button', { name: 'Save' });
+      expect(saveBtn).not.toBeDisabled();
+
+      // When saving is active
+      rerender(
+        <BottomSheet
+          isOpen={true}
+          onClose={() => {}}
+          title="Create Record"
+          onSave={onSaveMock}
+          saveLabel="Save"
+          isSaving={true}
+          saveDisabled={false}
+        >
+          <div>Form Content</div>
+        </BottomSheet>
+      );
+
+      const savingBtn = screen.getByRole('button', { name: 'Saving...' });
+      expect(savingBtn).toBeDisabled();
+    });
+
+    it('disables save button when saveDisabled is explicitly set', async () => {
+      const { render, screen } = await import('@testing-library/react');
+      const { BottomSheet } = await import('../components/BottomSheet');
+
+      render(
+        <BottomSheet
+          isOpen={true}
+          onClose={() => {}}
+          title="Create Record"
+          onSave={() => {}}
+          saveLabel="Submit"
+          saveDisabled={true}
+        >
+          <div>Form Content</div>
+        </BottomSheet>
+      );
+
+      const btn = screen.getByRole('button', { name: 'Submit' });
+      expect(btn).toBeDisabled();
+    });
+
+    it('prevents double submission during async save and shows loading state', async () => {
+      const { render, screen, waitFor } = await import('@testing-library/react');
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const { BottomSheet } = await import('../components/BottomSheet');
+
+      let resolveSave!: () => void;
+      const onSaveMock = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSave = resolve;
+          })
+      );
+
+      const user = userEvent.setup();
+      render(
+        <BottomSheet
+          isOpen={true}
+          onClose={() => {}}
+          title="New Client"
+          onSave={onSaveMock}
+          saveLabel="Create Client"
+          savingLabel="Creating..."
+        >
+          <div>Client Form</div>
+        </BottomSheet>
+      );
+
+      const btn = screen.getByRole('button', { name: 'Create Client' });
+      await user.click(btn);
+      await user.click(btn);
+
+      expect(onSaveMock).toHaveBeenCalledTimes(1);
+      const loadingBtn = screen.getByRole('button', { name: 'Creating...' });
+      expect(loadingBtn).toBeDisabled();
+      expect(loadingBtn).toHaveAttribute('aria-busy', 'true');
+
+      resolveSave();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Create Client' })).not.toBeDisabled();
+      });
+    });
+
+    it('displays inline error alert, keeps sheet open, and preserves entered data when save fails', async () => {
+      const { render, screen, waitFor } = await import('@testing-library/react');
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const React = await import('react');
+      const { BottomSheet } = await import('../components/BottomSheet');
+
+      const onCloseMock = vi.fn();
+
+      function TestHarness() {
+        const [value, setValue] = React.useState('');
+        const [isOpen, setIsOpen] = React.useState(true);
+        const handleSave = async () => {
+          throw new Error('Network error while saving transaction');
+        };
+        return (
+          <BottomSheet
+            isOpen={isOpen}
+            onClose={() => {
+              setIsOpen(false);
+              onCloseMock();
+            }}
+            title="Record Transaction"
+            onSave={handleSave}
+            saveLabel="Save Transaction"
+          >
+            <input
+              aria-label="Amount"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </BottomSheet>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<TestHarness />);
+
+      const input = screen.getByLabelText('Amount');
+      await user.type(input, '425.50');
+      await user.click(screen.getByRole('button', { name: 'Save Transaction' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Network error while saving transaction'
+        );
+      });
+      expect(onCloseMock).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Amount')).toHaveValue('425.50');
+    });
+
+    it('exposes contextual labels and disabled state until valid inputs on Finance and Tasks forms', async () => {
+      const { render, screen, within } = await import('@testing-library/react');
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const App = (await import('../App')).default;
+
+      window.localStorage.setItem('menkir-seen-onboarding', 'true');
+      const user = userEvent.setup();
+      render(<App />);
+
+      // Open Tasks via Productivity tab -> verify disabled Create Task until title entered
+      await user.click(screen.getByRole('button', { name: /go to productivity tab/i }));
+      await user.click(screen.getByText('Tasks', { selector: 'h3' }));
+      await user.click(screen.getByRole('button', { name: /add task/i }));
+
+      const newTaskDialog = screen.getByRole('dialog', { name: /new task/i });
+      const createTaskBtn = within(newTaskDialog).getByRole('button', { name: /^create task$/i });
+      expect(createTaskBtn).toBeDisabled();
+
+      await user.type(within(newTaskDialog).getByPlaceholderText(/task title/i), 'Review Architecture');
+      expect(createTaskBtn).not.toBeDisabled();
+      await user.click(createTaskBtn);
+
+      // Edit task -> verify Save Changes label
+      const taskNodes = screen.getAllByText('Review Architecture');
+      await user.click(taskNodes[taskNodes.length - 1]);
+      const editTaskDialog = screen.getByRole('dialog', { name: /edit task/i });
+      expect(within(editTaskDialog).getByRole('button', { name: /^save changes$/i })).toBeInTheDocument();
+      await user.click(within(editTaskDialog).getByRole('button', { name: /close sheet/i }));
+      const backBtns = screen.getAllByRole('button', { name: /^back$/i });
+      await user.click(backBtns[backBtns.length - 1]);
+
+      // Open Finance -> verify Save Transaction disabled until amount > 0
+      await user.click(screen.getByText('Finance', { selector: 'h3' }));
+      await user.click(screen.getAllByRole('button', { name: /log revenue/i })[0]);
+
+      const txDialog = screen.getByRole('dialog', { name: /record transaction/i });
+      const saveTxBtn = within(txDialog).getByRole('button', { name: /^save transaction$/i });
+      expect(saveTxBtn).toBeDisabled();
+      await user.type(within(txDialog).getByPlaceholderText('0.00'), '1500');
+      expect(saveTxBtn).not.toBeDisabled();
+    });
+
+    it('requires explicit approval before saving AI-generated templates and opens unified SaveActionButton', async () => {
+      const { render, screen, waitFor, within } = await import('@testing-library/react');
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const App = (await import('../App')).default;
+
+      window.localStorage.clear();
+      window.localStorage.setItem('menkir-seen-onboarding', 'true');
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            text: JSON.stringify({
+              name: 'Client Onboarding Flow',
+              description: 'End-to-end onboarding plan',
+              type: 'project',
+              projectPriority: 'high',
+              projectDurationDays: 14,
+              tasks: [
+                { title: 'Kickoff Call', priority: 'High', durationMinutes: 45, offsetDays: 0 },
+              ],
+            }),
+          }),
+      }) as any;
+
+      const user = userEvent.setup();
+      render(<App />);
+
+      await user.click(screen.getByRole('button', { name: /go to productivity tab/i }));
+      await user.click(screen.getByText('Templates', { selector: 'h3' }));
+      await user.click(screen.getByRole('button', { name: /generate with ai/i }));
+
+      const aiDialog = screen.getByRole('dialog', { name: /generate ai template/i });
+      await user.type(
+        within(aiDialog).getByPlaceholderText(/onboarding workflow/i),
+        'Design agency onboarding'
+      );
+      await user.click(within(aiDialog).getByRole('button', { name: /^generate template$/i }));
+
+      // Wait for approval review screen — must NOT auto-save before user approves
+      const reviewDialog = await screen.findByRole('dialog', { name: /review generated template/i });
+      expect(within(reviewDialog).getByDisplayValue('Client Onboarding Flow')).toBeInTheDocument();
+      const storedBeforeApproval = JSON.parse(window.localStorage.getItem('menkir-templates') || '[]');
+      expect(storedBeforeApproval).toHaveLength(0);
+
+      // Approve & save
+      await user.click(within(reviewDialog).getByRole('button', { name: /approve & save template/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Client Onboarding Flow')).toBeInTheDocument();
+      });
+      const storedAfterApproval = JSON.parse(window.localStorage.getItem('menkir-templates') || '[]');
+      expect(storedAfterApproval).toHaveLength(1);
+    });
+
+    it('preserves client relationship when logging revenue from a linked project', async () => {
+      const { render, screen, waitFor, within } = await import('@testing-library/react');
+      const userEvent = (await import('@testing-library/user-event')).default;
+      const App = (await import('../App')).default;
+
+      window.localStorage.clear();
+      window.localStorage.setItem('menkir-seen-onboarding', 'true');
+      window.localStorage.setItem(
+        'menkir-clients',
+        JSON.stringify([
+          { id: 'c-1', name: 'Apex Corp', status: 'active', tags: [], avatarSeed: 'seed-1' },
+        ])
+      );
+      window.localStorage.setItem(
+        'menkir-projects',
+        JSON.stringify([
+          {
+            id: 'p-1',
+            index: 'PRJ-01',
+            name: 'Apex Portal',
+            priority: 'high',
+            completionPct: 20,
+            tone: 'lime',
+            status: 'active',
+            clientId: 'c-1',
+          },
+        ])
+      );
+
+      const user = userEvent.setup();
+      render(<App />);
+
+      await user.click(screen.getByRole('button', { name: /go to projects tab/i }));
+      await user.click(screen.getAllByText('Apex Portal')[0]);
+      await user.click(screen.getByRole('button', { name: /log revenue/i }));
+
+      const revDialog = screen.getByRole('dialog', { name: /add revenue entry/i });
+      const saveRevBtn = within(revDialog).getByRole('button', { name: /^save transaction$/i });
+      expect(saveRevBtn).toBeDisabled();
+
+      await user.type(within(revDialog).getByPlaceholderText('e.g. 5000'), '2750');
+      expect(saveRevBtn).not.toBeDisabled();
+      await user.click(saveRevBtn);
+
+      await waitFor(() => {
+        const storedRevenues = JSON.parse(window.localStorage.getItem('menkir-revenue') || '[]');
+        expect(storedRevenues).toHaveLength(1);
+        expect(storedRevenues[0]).toMatchObject({
+          amount: 2750,
+          projectId: 'p-1',
+          clientId: 'c-1',
+        });
+      });
+    });
+  });
 });

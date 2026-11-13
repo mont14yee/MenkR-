@@ -12,6 +12,9 @@ import { useTasks } from '../context/TasksContext';
 import { useCalendar } from '../context/CalendarContext';
 import { useLibrary } from '../context/LibraryContext';
 import { SearchPicker } from '../components/SearchPicker';
+import { SaveActionButton } from '../components/BottomSheet';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 interface Props {
   template: TemplateItem;
@@ -25,9 +28,13 @@ export function TemplateInstantiator({ template, onDismiss, onComplete }: Props)
   const { addTask } = useTasks();
   const { addEvent } = useCalendar();
   const { addLibraryItem } = useLibrary();
+  const { role } = useAuth();
+  const { showToast } = useToast();
+  const isViewer = role === 'viewer';
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
 
   // Form State
@@ -87,74 +94,95 @@ export function TemplateInstantiator({ template, onDismiss, onComplete }: Props)
   }, [template.library, startDate, clientId, projectName, deadlineDate, projectManager]);
 
   const handleCreate = async () => {
+    if (isGenerating) return;
+    if (isViewer) {
+      const msg = 'Viewer role has read-only access.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    if (!projectName.trim()) {
+      const msg = 'Project name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+
     setIsGenerating(true);
-    
-    // 1. Create Project
-    const projectId = addProject({
-      name: projectName,
-      priority: template.projectPriority || 'low',
-      completionPct: 0,
-      tone: 'lime',
-      clientId: clientId || undefined,
-      status: 'active',
-      dueDate: deadlineDate,
-      notes: resolveVariables(template.projectNotes || ''),
-    });
-
-    // Small async yield for responsive UI
-    await new Promise(r => setTimeout(r, 300));
-
-    // 2. Create Tasks linked to Project & Client
-    for (const gt of generatedTasks) {
-      addTask({
-        title: gt.title,
-        categoryId: 'workflow',
-        priority: gt.priority || 'Medium',
-        date: gt.calculatedDate,
-        dueDate: gt.calculatedDate,
-        notes: gt.notes,
-        status: 'upcoming',
-        projectId,
+    setCreateError(null);
+    try {
+      // 1. Create Project
+      const projectId = addProject({
+        name: projectName.trim(),
+        priority: template.projectPriority || 'low',
+        completionPct: 0,
+        tone: 'lime',
         clientId: clientId || undefined,
+        status: 'active',
+        dueDate: deadlineDate,
+        notes: resolveVariables(template.projectNotes || ''),
       });
-    }
 
-    // 3. Create Schedule Events
-    for (const ge of generatedEvents) {
-      addEvent({
-        title: ge.title,
-        date: ge.calculatedDate,
-        startTime: ge.startTime || '09:00',
-        endTime: ge.startTime ? `${parseInt(ge.startTime.split(':')[0]) + 1}:00` : '10:00',
-        duration: ge.durationMinutes || 60,
-        allDay: !ge.startTime,
-        type: ge.type || 'Milestone',
-        status: 'scheduled',
-        notes: ge.notes,
-        projectId,
-        clientId: clientId || undefined,
-        categoryId: '',
-        repeat: 'None'
-      });
-    }
+      // Small async yield for responsive UI
+      await new Promise(r => setTimeout(r, 300));
 
-    // 4. Create Library Items (Starter specifications, checklists, or document templates)
-    for (const gl of generatedLibrary) {
-      addLibraryItem({
-        name: gl.name,
-        type: gl.type || 'file',
-        tags: gl.tags || ['template-generated'],
-        urlOrReference: '',
-        category: gl.category || 'Documents',
-        projectId,
-        clientId: clientId || undefined,
-        description: `Starter document instantiated from template: ${template.name}`,
-        isFavorite: false,
-      });
-    }
+      // 2. Create Tasks linked to Project & Client
+      for (const gt of generatedTasks) {
+        addTask({
+          title: gt.title,
+          categoryId: 'workflow',
+          priority: gt.priority || 'Medium',
+          date: gt.calculatedDate,
+          dueDate: gt.calculatedDate,
+          notes: gt.notes,
+          status: 'upcoming',
+          projectId,
+          clientId: clientId || undefined,
+        });
+      }
 
-    setIsGenerating(false);
-    onComplete(projectId);
+      // 3. Create Schedule Events
+      for (const ge of generatedEvents) {
+        addEvent({
+          title: ge.title,
+          date: ge.calculatedDate,
+          startTime: ge.startTime || '09:00',
+          endTime: ge.startTime ? `${parseInt(ge.startTime.split(':')[0]) + 1}:00` : '10:00',
+          duration: ge.durationMinutes || 60,
+          allDay: !ge.startTime,
+          type: ge.type || 'Milestone',
+          status: 'scheduled',
+          notes: ge.notes,
+          projectId,
+          clientId: clientId || undefined,
+          categoryId: '',
+          repeat: 'none'
+        });
+      }
+
+      // 4. Create Library Items (Starter specifications, checklists, or document templates)
+      for (const gl of generatedLibrary) {
+        addLibraryItem({
+          name: gl.name,
+          type: gl.type || 'file',
+          tags: gl.tags || ['template-generated'],
+          urlOrReference: '',
+          category: gl.category || 'Documents',
+          projectId,
+          clientId: clientId || undefined,
+          description: `Starter document instantiated from template: ${template.name}`,
+          isFavorite: false,
+        });
+      }
+
+      setCreatedProjectId(projectId);
+      showToast({ message: `Created project "${projectName.trim()}" from template.` });
+      onComplete(projectId);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to instantiate template. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -305,13 +333,26 @@ export function TemplateInstantiator({ template, onDismiss, onComplete }: Props)
               )}
             </div>
 
+            {createError && (
+              <div role="alert" className="px-3.5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 text-[13px] font-medium">
+                {createError}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 mt-3 shrink-0">
               <Button variant="secondary" onClick={() => setStep(1)} disabled={isGenerating}>
                 Back
               </Button>
-              <Button onClick={handleCreate} disabled={isGenerating}>
-                {isGenerating ? <Loader2 size={18} className="animate-spin mx-auto" /> : '6. Confirm & Create'}
-              </Button>
+              <SaveActionButton
+                variant="compact"
+                onSave={handleCreate}
+                label="6. Confirm & Create"
+                savingLabel="Creating..."
+                isSaving={isGenerating}
+                disabled={isViewer || !projectName.trim()}
+                onError={setCreateError}
+                className="w-full h-11 rounded-full"
+              />
             </div>
           </div>
         )}

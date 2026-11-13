@@ -12,7 +12,7 @@ import { usePreferences } from '../context/PreferencesContext';
 import { useProfile } from '../context/ProfileContext';
 import { useAuth, OrgRole, OrgMember, OrgInvitation } from '../context/AuthContext';
 import { pushDataToPostgres } from '../services/syncService';
-import { BottomSheet, BottomSheetField } from '../components/BottomSheet';
+import { BottomSheet, BottomSheetField, SaveActionButton } from '../components/BottomSheet';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { generateId } from '../utils/id';
 import { useToast } from '../context/ToastContext';
@@ -24,6 +24,9 @@ import { AuditLogModal } from '../components/AuditLogModal';
 
 function PreferencesScreen({ onBack }: { onBack: () => void }) {
   const { preferences, updatePreferences } = usePreferences();
+  const { showToast } = useToast();
+  const { role } = useAuth();
+  const isReadOnly = role === 'viewer';
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryColor, setNewCategoryColor] = useState('#3b82f6');
@@ -31,24 +34,45 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
   const [deleteCategoryId, setDeleteCategoryId] = useState<string | null>(null);
 
   const handleDeleteCategory = () => {
+    if (isReadOnly) {
+      showToast({ message: 'Viewer role has read-only access.' });
+      setDeleteCategoryId(null);
+      return;
+    }
     if (deleteCategoryId) {
       updatePreferences({ categories: preferences.categories.filter(c => c.id !== deleteCategoryId) });
       setDeleteCategoryId(null);
+      showToast({ message: 'Category deleted.' });
     }
   };
 
   const handleSaveCategory = () => {
-    if (!validateRequired(newCategoryName)) {
-      return;
+    if (isReadOnly) {
+      const msg = 'Viewer role has read-only access.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    updatePreferences({
-      categories: [
-        ...preferences.categories,
-        { id: generateId(), label: newCategoryName.trim(), color: newCategoryColor, scope: newCategoryScope }
-      ]
-    });
-    setNewCategoryName('');
-    setIsAddCategoryOpen(false);
+    const val = validateRequired(newCategoryName, 'Category name');
+    if (!val.isValid) {
+      const msg = val.error || 'Category name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
+    }
+    try {
+      updatePreferences({
+        categories: [
+          ...preferences.categories,
+          { id: generateId(), label: val.value!, color: newCategoryColor, scope: newCategoryScope }
+        ]
+      });
+      setNewCategoryName('');
+      setIsAddCategoryOpen(false);
+      showToast({ message: 'Category added successfully.' });
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to add category. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    }
   };
 
   return (
@@ -210,12 +234,21 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
                     <div className="text-[12px] text-tx-muted capitalize">{c.scope}</div>
                   </div>
                 </div>
-                <button onClick={() => setDeleteCategoryId(c.id)} className="text-tx-muted hover:text-red-500 transition-colors p-2" aria-label="Delete category">
+                <button
+                  onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access.' }) : setDeleteCategoryId(c.id)}
+                  disabled={isReadOnly}
+                  className="text-tx-muted hover:text-red-500 transition-colors p-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Delete category"
+                >
                   <Trash2 size={16} />
                 </button>
               </div>
             ))}
-            <button onClick={() => setIsAddCategoryOpen(true)} className="py-3 rounded-xl border border-bd-subtle border-dashed text-[14px] font-medium text-tx-muted text-center active:bg-surface-neutral transition-colors">
+            <button
+              onClick={() => isReadOnly ? showToast({ message: 'Viewer role has read-only access.' }) : setIsAddCategoryOpen(true)}
+              disabled={isReadOnly}
+              className="py-3 rounded-xl border border-bd-subtle border-dashed text-[14px] font-medium text-tx-muted text-center active:bg-surface-neutral transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               + Add Category
             </button>
           </div>
@@ -227,7 +260,9 @@ function PreferencesScreen({ onBack }: { onBack: () => void }) {
         onClose={() => setIsAddCategoryOpen(false)}
         title="New Category"
         onSave={handleSaveCategory}
-        saveLabel="Create"
+        saveLabel="Create Category"
+        savingLabel="Creating..."
+        saveDisabled={isReadOnly || !newCategoryName.trim()}
       >
         <BottomSheetField label="Category Name">
           <input 
@@ -297,6 +332,8 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
   const [isOrgModalOpen, setIsOrgModalOpen] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
   const [newOrgCurrency, setNewOrgCurrency] = useState('USD');
+  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+  const [createOrgError, setCreateOrgError] = useState<string | null>(null);
 
   // Team & RBAC state
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
@@ -305,6 +342,7 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
   const [isLoadingTeam, setIsLoadingTeam] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<OrgRole>('member');
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [inviteTokenInput, setInviteTokenInput] = useState('');
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
 
@@ -349,26 +387,50 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleCreateNewOrg = async () => {
-    if (!newOrgName.trim()) {
-      showToast({ message: "Organization name is required." });
-      return;
+    if (isCreatingOrg) return;
+    setCreateOrgError(null);
+    const nameVal = validateRequired(newOrgName, "Workspace name");
+    if (!nameVal.isValid) {
+      const msg = nameVal.error || "Organization name is required.";
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    const created = await createOrg(newOrgName.trim(), newOrgCurrency);
-    if (created) {
-      setNewOrgName('');
-      setIsOrgModalOpen(false);
+    setIsCreatingOrg(true);
+    try {
+      const created = await createOrg(newOrgName.trim(), newOrgCurrency);
+      if (created) {
+        setNewOrgName('');
+        setIsOrgModalOpen(false);
+        showToast({ message: "Workspace created successfully." });
+      } else {
+        throw new Error('Unable to create workspace. Please try again.');
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to create workspace. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    } finally {
+      setIsCreatingOrg(false);
     }
   };
 
   const handleSendInvite = async () => {
-    if (!inviteEmail.trim() || !inviteEmail.includes('@')) {
-      showToast({ message: "Please enter a valid email address." });
+    if (isSendingInvite) return;
+    const emailVal = validateEmail(inviteEmail, true);
+    if (!emailVal.isValid) {
+      showToast({ message: emailVal.error || "Please enter a valid email address." });
       return;
     }
-    const success = await inviteUser(inviteEmail.trim(), inviteRole);
-    if (success) {
-      setInviteEmail('');
-      await loadTeamData();
+    setIsSendingInvite(true);
+    try {
+      const success = await inviteUser(inviteEmail.trim(), inviteRole);
+      if (success) {
+        setInviteEmail('');
+        await loadTeamData();
+        showToast({ message: "Invitation sent successfully." });
+      }
+    } finally {
+      setIsSendingInvite(false);
     }
   };
 
@@ -471,17 +533,33 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
   };
 
   const handleSaveProfile = () => {
-    if (!validateRequired(profileForm.name)) {
-      showToast({ message: "Full Name is required." });
-      return;
+    const nameVal = validateRequired(profileForm.name, 'Full Name');
+    if (!nameVal.isValid) {
+      const msg = nameVal.error || 'Full Name is required.';
+      showToast({ message: msg });
+      throw new Error(msg);
     }
-    if (profileForm.email && !validateEmail(profileForm.email)) {
-      showToast({ message: "Please enter a valid email address." });
-      return;
+    if (profileForm.email) {
+      const emailVal = validateEmail(profileForm.email, false);
+      if (!emailVal.isValid) {
+        const msg = emailVal.error || 'Please enter a valid email address.';
+        showToast({ message: msg });
+        throw new Error(msg);
+      }
     }
-    updateProfile(profileForm);
-    setIsProfileOpen(false);
-    showToast({ message: "Profile details updated successfully." });
+    try {
+      updateProfile({
+        name: nameVal.value!,
+        email: profileForm.email.trim(),
+        businessName: profileForm.businessName.trim(),
+      });
+      setIsProfileOpen(false);
+      showToast({ message: 'Profile details updated successfully.' });
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to save profile details. Please try again.';
+      showToast({ message: msg });
+      throw err instanceof Error ? err : new Error(msg);
+    }
   };
 
   const handleExportData = () => {
@@ -890,6 +968,11 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
         title="Account Details"
         onSave={handleSaveProfile}
         saveLabel="Save Changes"
+        savingLabel="Saving..."
+        saveDisabled={
+          !profileForm.name.trim() ||
+          (!!profileForm.email.trim() && !validateEmail(profileForm.email, false).isValid)
+        }
       >
         <BottomSheetField label="Full Name">
           <input 
@@ -1042,11 +1125,19 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
           {/* Create New Organization */}
           <div className="pt-3 border-t border-bd-subtle space-y-2">
             <h4 className="text-[13px] font-semibold text-tx-primary">Create New Organization</h4>
+            {createOrgError && (
+              <div role="alert" className="px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 text-[12px] font-medium">
+                {createOrgError}
+              </div>
+            )}
             <input
               type="text"
               placeholder="e.g. Acme Studio"
               value={newOrgName}
-              onChange={(e) => setNewOrgName(e.target.value)}
+              onChange={(e) => {
+                setNewOrgName(e.target.value);
+                if (createOrgError) setCreateOrgError(null);
+              }}
               className="w-full px-3 py-2.5 rounded-xl bg-surface-neutral border border-bd-subtle text-[14px] text-tx-primary outline-none focus:border-tx-primary"
             />
             <div className="flex gap-2">
@@ -1060,13 +1151,16 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
                 <option value="GBP">GBP (£)</option>
                 <option value="ETB">Ethiopian Birr (ETB)</option>
               </select>
-              <button
-                onClick={handleCreateNewOrg}
+              <SaveActionButton
+                variant="compact"
+                onSave={handleCreateNewOrg}
+                label="Create Workspace"
+                savingLabel="Creating..."
+                isSaving={isCreatingOrg}
                 disabled={!newOrgName.trim()}
-                className="flex-1 py-2 px-4 rounded-xl bg-tx-primary text-tx-inverse text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                Create Workspace
-              </button>
+                onError={setCreateOrgError}
+                className="flex-1"
+              />
             </div>
           </div>
 
@@ -1217,10 +1311,10 @@ export function Settings({ onDismiss }: { onDismiss: () => void }) {
                 </select>
                 <button
                   onClick={handleSendInvite}
-                  disabled={!inviteEmail.trim()}
+                  disabled={!inviteEmail.trim() || isSendingInvite}
                   className="py-2 px-3 rounded-xl bg-tx-primary text-tx-inverse text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0 flex items-center gap-1.5"
                 >
-                  <UserPlus size={14} /> Invite
+                  <UserPlus size={14} /> {isSendingInvite ? 'Sending...' : 'Invite'}
                 </button>
               </div>
 
